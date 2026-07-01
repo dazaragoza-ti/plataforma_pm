@@ -1,30 +1,20 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+// Importación correcta de tu archivo de entrada principal
 import 'package:plataforma_pm/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('Smoke test de inicio de Plataforma PM', (WidgetTester tester) async {
+    // Construye nuestra aplicación usando la clase corregida (MainApp) y renderiza el primer frame.
+    await tester.pumpWidget(const MainApp());
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
+    // Verificamos que los textos principales de la pantalla de login aparezcan en pantalla
+    expect(find.text('Plataforma PM'), findsOneWidget);
+    expect(find.text('Iniciar Sesión'), findsOneWidget);
+    
+    // Verificamos que no existan elementos del contador por defecto que generen falsos negativos
     expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.byIcon(Icons.add), findsNothing);
   });
 }
