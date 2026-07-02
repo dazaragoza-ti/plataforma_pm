@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../shared/widgets/custom_text_field.dart';
 import '../../../../shared/widgets/custom_button.dart';
-import '../../../home/presentation/screens/home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -25,42 +24,44 @@ class _LoginScreenState extends State<LoginScreen> {
   void _onLoginPressed() {
     setState(() => _isSubmitting = true);
     
-    // Simula una transición rápida de carga para mantener la respuesta visual premium
+    // Simulación de carga rápida para mantener la respuesta visual premium
     Future.delayed(const Duration(milliseconds: 400), () {
       if (!mounted) return;
       
-      // Redirección directa al Home limpiando el historial de navegación
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const HomeScreen()),
-      );
+      // Reseteamos el estado de carga antes de movernos
+      setState(() => _isSubmitting = false);
+
+      // Usamos la ruta nombrada integrada con el historial del navegador Web
+      Navigator.pushReplacementNamed(context, '/home');
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFF7FAFC),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24.0),
           child: Container(
-            constraints: const BoxConstraints(maxWidth: 400), // Control para visualización en Web/Desktop
+            constraints: const BoxConstraints(maxWidth: 400), // Control para visualización en Web
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Logo Corporativo Temporal
                 const FlutterLogo(size: 80), 
                 const SizedBox(height: 32),
                 
                 Text(
                   'Plataforma PM',
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF1A202C),
+                      ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 24),
 
-                // Input de Usuario sin validación estricta
                 CustomTextField(
                   controller: _emailController,
                   labelText: 'Correo Electrónico o Usuario',
@@ -69,7 +70,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 16),
                 
-                // Input de Contraseña sin validación de caracteres
                 CustomTextField(
                   controller: _passwordController,
                   labelText: 'Contraseña',
@@ -78,7 +78,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                // Botón de acceso directo
                 CustomButton(
                   text: 'Iniciar Sesión',
                   isLoading: _isSubmitting,

@@ -7,12 +7,16 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Definimos los módulos del menú
     final List<BubbleMenuItem> menuItems = [
       BubbleMenuItem(
         title: 'Mi Perfil',
         icon: Icons.person_rounded,
         color: const Color(0xFF3182CE),
-        onTap: () => debugPrint('Navegando a Perfil...'),
+        onTap: () {
+          // Cambiado a ruta nombrada para soportar las flechas del navegador Web
+          Navigator.pushNamed(context, '/profile');
+        },
       ),
       BubbleMenuItem(
         title: 'Bitácora',
@@ -50,6 +54,7 @@ class HomeScreen extends StatelessWidget {
             padding: const EdgeInsets.only(right: 16.0),
             child: OutlinedButton.icon(
               onPressed: () {
+                // Regresa al login limpiando el historial de rutas
                 Navigator.pushReplacementNamed(context, '/login'); 
               },
               icon: const Icon(Icons.logout_rounded, size: 16, color: Color(0xFFE53E3E)),
@@ -67,49 +72,60 @@ class HomeScreen extends StatelessWidget {
           ),
         ],
       ),
-      // Layout de Centrado Matemático Absoluto
-      body: Center(
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 400), // Limita el ancho del contenedor en Web
-          padding: const EdgeInsets.all(32.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center, // Centra verticalmente
-            crossAxisAlignment: CrossAxisAlignment.center, // Centra horizontalmente
-            children: [
-              const Text(
-                'Bienvenido de vuelta,',
-                style: TextStyle(fontSize: 15, color: Color(0xFF718096), fontWeight: FontWeight.w500),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                'Selecciona un módulo',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: Color(0xFF1A202C), letterSpacing: -0.5),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 48),
-              
-              // Fila 1 de Burbujas
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Expanded(child: BubbleButton(title: menuItems[0].title, icon: menuItems[0].icon, color: menuItems[0].color, onTap: menuItems[0].onTap)),
-                  const SizedBox(width: 32),
-                  Expanded(child: BubbleButton(title: menuItems[1].title, icon: menuItems[1].icon, color: menuItems[1].color, onTap: menuItems[1].onTap)),
-                ],
-              ),
-              const SizedBox(height: 32),
-              
-              // Fila 2 de Burbujas
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Expanded(child: BubbleButton(title: menuItems[2].title, icon: menuItems[2].icon, color: menuItems[2].color, onTap: menuItems[2].onTap)),
-                  const SizedBox(width: 32),
-                  Expanded(child: BubbleButton(title: menuItems[3].title, icon: menuItems[3].icon, color: menuItems[3].color, onTap: menuItems[3].onTap)),
-                ],
-              ),
-            ],
+      // Forzamos el centrado matemático exacto en toda la ventana Web
+      body: SizedBox.expand(
+        child: Center(
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.symmetric(horizontal: 32.0, vertical: 24.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const Text(
+                  'Bienvenido de vuelta,',
+                  style: TextStyle(fontSize: 15, color: Color(0xFF718096), fontWeight: FontWeight.w500),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Selecciona un módulo',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: Color(0xFF1A202C), letterSpacing: -0.5),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 48),
+                
+                // Contenedor estricto que agrupa la visualización en cuadrícula 2x2 en medio de la pantalla
+                Container(
+                  constraints: const BoxConstraints(maxWidth: 340), 
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Fila 1 de burbujas animadas
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Expanded(child: BubbleButton(title: menuItems[0].title, icon: menuItems[0].icon, color: menuItems[0].color, onTap: menuItems[0].onTap)),
+                          const SizedBox(width: 32),
+                          Expanded(child: BubbleButton(title: menuItems[1].title, icon: menuItems[1].icon, color: menuItems[1].color, onTap: menuItems[1].onTap)),
+                        ],
+                      ),
+                      const SizedBox(height: 32),
+                      
+                      // Fila 2 de burbujas animadas
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Expanded(child: BubbleButton(title: menuItems[2].title, icon: menuItems[2].icon, color: menuItems[2].color, onTap: menuItems[2].onTap)),
+                          const SizedBox(width: 32),
+                          Expanded(child: BubbleButton(title: menuItems[3].title, icon: menuItems[3].icon, color: menuItems[3].color, onTap: menuItems[3].onTap)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
