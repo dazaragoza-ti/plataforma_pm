@@ -1,133 +1,218 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../widgets/bubble_button.dart';
 import '../../domain/entities/bubble_menu_item.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  static const String _nombreCompleto = 'Ing. Alejandro Martínez';
+
+  late Timer _clockTimer;
+  DateTime _now = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    // Actualiza la fecha/hora cada minuto
+    _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      setState(() => _now = DateTime.now());
+    });
+  }
+
+  @override
+  void dispose() {
+    _clockTimer.cancel();
+    super.dispose();
+  }
+
+  String _formatDateTime(DateTime dt) {
+    const meses = [
+      'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+      'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+    ];
+    final day = dt.day.toString().padLeft(2, '0');
+    final month = meses[dt.month - 1];
+    int hour12 = dt.hour % 12;
+    if (hour12 == 0) hour12 = 12;
+    final hourStr = hour12.toString().padLeft(2, '0');
+    final minuteStr = dt.minute.toString().padLeft(2, '0');
+    final period = dt.hour < 12 ? 'AM' : 'PM';
+    return '$day de $month de ${dt.year}, $hourStr:$minuteStr $period';
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // Definimos los módulos del menú
     final List<BubbleMenuItem> menuItems = [
       BubbleMenuItem(
-        title: 'Mi Perfil',
+        title: 'Mi perfil',
         icon: Icons.person_rounded,
-        color: const Color(0xFF3182CE),
-        onTap: () {
-          // Cambiado a ruta nombrada para soportar las flechas del navegador Web
-          Navigator.pushNamed(context, '/profile');
-        },
+        color: const Color(0xFF26A69A),
+        onTap: () => Navigator.pushNamed(context, '/profile'),
       ),
       BubbleMenuItem(
-        title: 'Bitácora',
-        icon: Icons.menu_book_rounded,
-        color: const Color(0xFF319795),
-        onTap: () => debugPrint('Navegando a Bitácora...'),
+        title: 'Vigilancia In/Out',
+        icon: Icons.videocam_rounded,
+        color: const Color(0xFF7E57C2),
+        onTap: () => debugPrint('Navegando a Vigilancia In/Out...'),
       ),
       BubbleMenuItem(
-        title: 'Proyectos',
-        icon: Icons.folder_special_rounded,
-        color: const Color(0xFF805AD5),
-        onTap: () => debugPrint('Navegando a Proyectos...'),
+        title: 'Kanban PM',
+        icon: Icons.view_kanban_rounded,
+        color: const Color(0xFFFFA726),
+        onTap: () => debugPrint('Abriendo Kanban PM...'),
       ),
       BubbleMenuItem(
-        title: 'Reportes',
-        icon: Icons.analytics_rounded,
-        color: const Color(0xFFDD6B20),
-        onTap: () => debugPrint('Navegando a Reportes...'),
+        title: 'IT Management',
+        icon: Icons.devices_other_rounded,
+        color: const Color(0xFF5C6BC0),
+        onTap: () => debugPrint('Navegando a IT Management...'),
+      ),
+      BubbleMenuItem(
+        title: 'Tickets de Soporte',
+        icon: Icons.support_agent_rounded,
+        color: const Color(0xFFEF5350),
+        onTap: () => debugPrint('Navegando a Tickets de Soporte...'),
+      ),
+      BubbleMenuItem(
+        title: 'RH',
+        icon: Icons.badge_rounded,
+        color: const Color(0xFF29B6F6),
+        onTap: () => debugPrint('Abriendo RH...'),
+      ),
+      BubbleMenuItem(
+        title: 'Centro de Ayuda',
+        icon: Icons.help_rounded,
+        color: const Color(0xFF9C27B0),
+        onTap: () => debugPrint('Abriendo Centro de Ayuda...'),
+      ),
+      BubbleMenuItem(
+        title: 'Bitácora Pintura',
+        icon: Icons.brush_rounded,
+        color: const Color(0xFF0FE64C),
+        onTap: () => debugPrint('Navegando a Bitácora Pintura...'),
       ),
     ];
 
+    final width = MediaQuery.of(context).size.width;
+    double tituloSize = 47;
+    double subtituloSize = 18;
+    if (width < 700) {
+      tituloSize = 32;
+      subtituloSize = 14;
+    } else if (width < 1000) {
+      tituloSize = 36;
+      subtituloSize = 16;
+    }
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF7FAFC),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        title: const Text(
-          'Plataforma PM', 
-          style: TextStyle(fontWeight: FontWeight.w800, color: Color(0xFF1A202C), fontSize: 20)
-        ),
-        centerTitle: false,
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 16.0),
-            child: OutlinedButton.icon(
-              onPressed: () {
-                // Regresa al login limpiando el historial de rutas
-                Navigator.pushReplacementNamed(context, '/login'); 
-              },
-              icon: const Icon(Icons.logout_rounded, size: 16, color: Color(0xFFE53E3E)),
-              label: const Text(
-                'Salir', 
-                style: TextStyle(color: Color(0xFFE53E3E), fontWeight: FontWeight.w700, fontSize: 13)
-              ),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Color(0xFFFED7D7), width: 1.5),
-                backgroundColor: const Color(0xFFFFF5F5),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
-              ),
+      backgroundColor: Colors.white,
+      body: Column(
+        children: [
+          // Encabezado superior: logo a la izquierda, acciones a la derecha.
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            decoration: BoxDecoration(
+              color: Colors.white,
             ),
-          ),
-        ],
-      ),
-      // Forzamos el centrado matemático exacto en toda la ventana Web
-      body: SizedBox.expand(
-        child: Center(
-          child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 32.0, vertical: 24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.center,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  'Bienvenido de vuelta,',
-                  style: TextStyle(fontSize: 15, color: Color(0xFF718096), fontWeight: FontWeight.w500),
-                  textAlign: TextAlign.center,
+                const Image(
+                  image: AssetImage('assets/logo sin fondo.png'),
+                  width: 200,
+                  height: 60,
                 ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Selecciona un módulo',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: Color(0xFF1A202C), letterSpacing: -0.5),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 48),
-                
-                // Contenedor estricto que agrupa la visualización en cuadrícula 2x2 en medio de la pantalla
-                Container(
-                  constraints: const BoxConstraints(maxWidth: 340), 
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Fila 1 de burbujas animadas
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Expanded(child: BubbleButton(title: menuItems[0].title, icon: menuItems[0].icon, color: menuItems[0].color, onTap: menuItems[0].onTap)),
-                          const SizedBox(width: 32),
-                          Expanded(child: BubbleButton(title: menuItems[1].title, icon: menuItems[1].icon, color: menuItems[1].color, onTap: menuItems[1].onTap)),
-                        ],
-                      ),
-                      const SizedBox(height: 32),
-                      
-                      // Fila 2 de burbujas animadas
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Expanded(child: BubbleButton(title: menuItems[2].title, icon: menuItems[2].icon, color: menuItems[2].color, onTap: menuItems[2].onTap)),
-                          const SizedBox(width: 32),
-                          Expanded(child: BubbleButton(title: menuItems[3].title, icon: menuItems[3].icon, color: menuItems[3].color, onTap: menuItems[3].onTap)),
-                        ],
-                      ),
-                    ],
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.pushReplacementNamed(context, '/login');
+                  },
+                  icon: const Icon(Icons.logout_rounded, size: 20, color: Color(0xFFE53E3E)),
+                  label: const Text(
+                    'Salir',
+                    style: TextStyle(color: Color(0xFFE53E3E), fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFFFED7D7), width: 2),
+                    backgroundColor: const Color(0xFFFFF5F5),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
                   ),
                 ),
               ],
             ),
           ),
-        ),
+
+          // Contenido central: bienvenida arriba, íconos al centro, fecha abajo.
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minHeight: constraints.maxHeight - 30),
+                    child: IntrinsicHeight(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Text(
+                            'BIENVENIDO',
+                            style: TextStyle(
+                              fontSize: tituloSize,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _nombreCompleto.toUpperCase(),
+                            style: TextStyle(fontSize: subtituloSize, color: const Color(0xFF666666)),
+                            textAlign: TextAlign.center,
+                          ),
+                          Expanded(
+                            child: Center(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                child: Wrap(
+                                  alignment: WrapAlignment.center,
+                                  spacing: 28,
+                                  runSpacing: 28,
+                                  children: [
+                                    for (final item in menuItems)
+                                      BubbleButton(
+                                        title: item.title,
+                                        icon: item.icon,
+                                        color: item.color,
+                                        onTap: item.onTap,
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 12, bottom: 10),
+                            child: Text(
+                              _formatDateTime(_now),
+                              style: const TextStyle(fontSize: 14, color: Color(0xFF666666)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

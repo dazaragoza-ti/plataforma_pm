@@ -21,80 +21,59 @@ class BubbleButton extends StatefulWidget {
 class _BubbleButtonState extends State<BubbleButton> {
   bool _isHovered = false;
 
+
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        // MouseRegion detecta de manera precisa la posición del cursor en Web/Desktop
-        MouseRegion(
-          onEnter: (_) => setState(() => _isHovered = true),
-          onExit: (_) => setState(() => _isHovered = false),
-          cursor: SystemMouseCursors.click,
-          child: AnimatedScale(
-            scale: _isHovered ? 1.12 : 1.0, // Efecto de acercamiento (zoom)
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOutCubic,
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: SizedBox(
+        width: 100,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            MouseRegion(
+              onEnter: (_) => setState(() => _isHovered = true),
+              onExit: (_) => setState(() => _isHovered = false),
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
                 onTap: widget.onTap,
-                customBorder: const CircleBorder(),
-                splashColor: widget.color.withValues(alpha: 0.12),
-                highlightColor: widget.color.withValues(alpha: 0.06),
-                child: AnimatedContainer(
+                child: AnimatedScale(
+                  scale: _isHovered ? 1.10 : 1.0,
                   duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOutCubic,
-                  padding: const EdgeInsets.all(26),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        widget.color.withValues(alpha: _isHovered ? 0.25 : 0.18), // Brilla más en hover
-                        widget.color.withValues(alpha: 0.05),
+                  curve: Curves.easeOut,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                    width: 100,
+                    height: 100,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: widget.color,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.07),
+                          blurRadius: 2,
+                        ),
                       ],
                     ),
-                    border: Border.all(
-                      color: widget.color.withValues(alpha: _isHovered ? 0.70 : 0.45),
-                      width: 2.5,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: widget.color.withValues(alpha: _isHovered ? 0.14 : 0.06), // Sombra más profunda en hover
-                        blurRadius: _isHovered ? 24 : 20,
-                        offset: _isHovered ? const Offset(0, 12) : const Offset(0, 10),
-                        spreadRadius: _isHovered ? 2 : 1,
-                      ),
-                    ],
-                  ),
-                  child: Icon(
-                    widget.icon,
-                    size: 38,
-                    color: widget.color,
+                    child: Icon(widget.icon, size: 50, color: Colors.white),
                   ),
                 ),
               ),
             ),
-          ),
+            const SizedBox(height: 15),
+            Text(
+              widget.title,
+              style: const TextStyle(fontSize: 15.5, color: Color(0xFF1A202C)),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
         ),
-        const SizedBox(height: 14),
-        Text(
-          widget.title,
-          style: const TextStyle(
-            fontSize: 13.5,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF2D3748),
-            letterSpacing: 0.3,
-          ),
-          textAlign: TextAlign.center,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ],
+      ),
     );
   }
 }
