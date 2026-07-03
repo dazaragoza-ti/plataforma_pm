@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../shared/widgets/custom_text_field.dart';
-import '../../../../shared/widgets/custom_button.dart';
+import '../../../home/presentation/widgets/custom_button_login.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -13,6 +13,8 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isSubmitting = false;
+
+  
 
   @override
   void dispose() {
@@ -44,31 +46,20 @@ class _LoginScreenState extends State<LoginScreen> {
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24.0),
           child: Container(
-            constraints: const BoxConstraints(maxWidth: 400), // Control para visualización en Web
+            constraints: const BoxConstraints(maxWidth: 350), // Control para visualización en Web
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const FlutterLogo(size: 80), 
-                const SizedBox(height: 32),
-                
-                Text(
-                  'Plataforma PM',
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        color: const Color(0xFF1A202C),
-                      ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 24),
+                Image(image: const AssetImage('assets/logo sin fondo.png'), width: 250, height: 80),
+                const SizedBox(height: 42),
 
                 CustomTextField(
                   controller: _emailController,
-                  labelText: 'Correo Electrónico o Usuario',
-                  hintText: 'usuario@empresa.com',
-                  prefixIcon: Icons.email_outlined,
+                  labelText: 'Usuario',
+                  prefixIcon: Icons.person_outline,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
                 
                 CustomTextField(
                   controller: _passwordController,
@@ -76,12 +67,14 @@ class _LoginScreenState extends State<LoginScreen> {
                   prefixIcon: Icons.lock_outline,
                   isPassword: true,
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 30),
 
                 CustomButton(
                   text: 'Iniciar Sesión',
                   isLoading: _isSubmitting,
                   onPressed: _onLoginPressed,
+                  color: const Color.fromARGB(255, 112, 112, 112), // Color azul premium
+                  borderRadius: 9.0, // Redondeo sutil para un look moderno
                 ),
               ],
             ),

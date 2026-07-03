@@ -7,6 +7,7 @@ class CustomTextField extends StatelessWidget {
   final IconData? prefixIcon;
   final bool isPassword;
   final String? Function(String?)? validator;
+  final Color? color;
 
   const CustomTextField({
     super.key,
@@ -16,6 +17,7 @@ class CustomTextField extends StatelessWidget {
     this.prefixIcon,
     this.isPassword = false,
     this.validator,
+    this.color,
   });
 
   @override
@@ -34,6 +36,13 @@ class CustomTextField extends StatelessWidget {
         ),
         filled: true,
         fillColor: Colors.grey[50],
+            focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8.0),
+          borderSide: BorderSide(
+            color: const Color.fromARGB(255, 112, 112, 112), // Focused border color
+            width: 2.0,
+          ),
+        ),
       ),
     );
   }
