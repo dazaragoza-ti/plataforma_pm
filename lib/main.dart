@@ -3,6 +3,7 @@ import 'package:plataforma_pm/core/theme/app_theme.dart';
 import 'package:plataforma_pm/features/auth/presentation/screens/login_screen.dart';
 import 'package:plataforma_pm/features/home/presentation/screens/home_screen.dart';
 import 'package:plataforma_pm/features/profile/presentation/screens/profile_screen.dart';
+import 'package:plataforma_pm/features/bitacora_pintura/presentation/screens/bitacora_dashboard_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,6 +28,7 @@ class MainApp extends StatelessWidget {
         '/login': (context) => const LoginScreen(),
         '/home': (context) => const HomeScreen(),
         '/profile': (context) => const ProfileScreen(),
+        '/bitacora': (context) => const BitacoraDashboardScreen(),
       },
     );
   }
