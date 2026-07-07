@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../widgets/bubble_button.dart';
 import '../../domain/entities/bubble_menu_item.dart';
+import '../../../bitacora_pintura/presentation/screens/bitacora_dashboard_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -95,7 +96,9 @@ class _HomeScreenState extends State<HomeScreen> {
         title: 'Bitácora Pintura',
         icon: Icons.brush_rounded,
         color: const Color(0xFF0FE64C),
-        onTap: () => debugPrint('Navegando a Bitácora Pintura...'),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const BitacoraDashboardScreen()),
+        ),
       ),
     ];
 
