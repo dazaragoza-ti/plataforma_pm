@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../widgets/bubble_button.dart';
 import '../../domain/entities/bubble_menu_item.dart';
 import '../../../bitacora_pintura/presentation/screens/bitacora_dashboard_screen.dart';
+import '../../../kanban_pm/presentation/screens/kanban_dashboard_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -34,8 +35,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String _formatDateTime(DateTime dt) {
     const meses = [
-      'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-      'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+      'enero',
+      'febrero',
+      'marzo',
+      'abril',
+      'mayo',
+      'junio',
+      'julio',
+      'agosto',
+      'septiembre',
+      'octubre',
+      'noviembre',
+      'diciembre',
     ];
     final day = dt.day.toString().padLeft(2, '0');
     final month = meses[dt.month - 1];
@@ -66,7 +77,9 @@ class _HomeScreenState extends State<HomeScreen> {
         title: 'Kanban PM',
         icon: Icons.view_kanban_rounded,
         color: const Color(0xFFFFA726),
-        onTap: () => debugPrint('Abriendo Kanban PM...'),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const KanbanDashboardScreen()),
+        ),
       ),
       BubbleMenuItem(
         title: 'IT Management',
@@ -120,9 +133,7 @@ class _HomeScreenState extends State<HomeScreen> {
           // Encabezado superior: logo a la izquierda, acciones a la derecha.
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-            ),
+            decoration: BoxDecoration(color: Colors.white),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -135,16 +146,29 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: () {
                     Navigator.pushReplacementNamed(context, '/login');
                   },
-                  icon: const Icon(Icons.logout_rounded, size: 20, color: Color(0xFFE53E3E)),
+                  icon: const Icon(
+                    Icons.logout_rounded,
+                    size: 20,
+                    color: Color(0xFFE53E3E),
+                  ),
                   label: const Text(
                     'Salir',
-                    style: TextStyle(color: Color(0xFFE53E3E), fontWeight: FontWeight.w700, fontSize: 15),
+                    style: TextStyle(
+                      color: Color(0xFFE53E3E),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    ),
                   ),
                   style: OutlinedButton.styleFrom(
                     side: const BorderSide(color: Color(0xFFFED7D7), width: 2),
                     backgroundColor: const Color(0xFFFFF5F5),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 0,
+                    ),
                   ),
                 ),
               ],
@@ -157,9 +181,14 @@ class _HomeScreenState extends State<HomeScreen> {
               builder: (context, constraints) {
                 return SingleChildScrollView(
                   physics: const BouncingScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 15,
+                  ),
                   child: ConstrainedBox(
-                    constraints: BoxConstraints(minHeight: constraints.maxHeight - 30),
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight - 30,
+                    ),
                     child: IntrinsicHeight(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.center,
@@ -176,13 +205,18 @@ class _HomeScreenState extends State<HomeScreen> {
                           const SizedBox(height: 4),
                           Text(
                             _nombreCompleto.toUpperCase(),
-                            style: TextStyle(fontSize: subtituloSize, color: const Color(0xFF666666)),
+                            style: TextStyle(
+                              fontSize: subtituloSize,
+                              color: const Color(0xFF666666),
+                            ),
                             textAlign: TextAlign.center,
                           ),
                           Expanded(
                             child: Center(
                               child: Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 10,
+                                ),
                                 child: Wrap(
                                   alignment: WrapAlignment.center,
                                   spacing: 28,
@@ -204,7 +238,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             padding: const EdgeInsets.only(top: 12, bottom: 10),
                             child: Text(
                               _formatDateTime(_now),
-                              style: const TextStyle(fontSize: 14, color: Color(0xFF666666)),
+                              style: const TextStyle(
+                                fontSize: 14,
+                                color: Color(0xFF666666),
+                              ),
                             ),
                           ),
                         ],
