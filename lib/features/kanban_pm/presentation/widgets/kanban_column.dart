@@ -1,128 +1,532 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../kanban_constants.dart';
+import '../../domain/entities/miembro.dart';
 import '../../domain/entities/tarea.dart';
+import '../../domain/entities/tarea_etiqueta.dart';
 import 'kanban_task_card.dart';
 
-/// Columna del tablero (TAREAS / PROCESO / PAUSA / TERMINADO / REVISADO).
-///
-/// Acepta soltar una tarjeta arrastrada desde otra columna para moverla
-/// (drag & drop). El encabezado usa el ícono de marcador y el borde
-/// inferior de color propio de cada columna, igual que en el tablero de
-/// referencia.
-class KanbanColumnView extends StatelessWidget {
+/// Dirección de autoscroll (-1, 1 ó `null`) según qué tan cerca está
+/// [posEnEje] de los bordes de `[inicioArea, finArea]` — pura aritmética,
+/// sin `Timer`/`ScrollController`, para poder reutilizarla tanto en el
+/// autoscroll vertical de una columna como en el horizontal del tablero.
+double? direccionAutoscroll({
+  required double posEnEje,
+  required double inicioArea,
+  required double finArea,
+  double umbral = 48.0,
+}) {
+  final distInicio = posEnEje - inicioArea;
+  final distFin = finArea - posEnEje;
+  if (distInicio < umbral && distInicio > -20) return -1;
+  if (distFin < umbral && distFin > -20) return 1;
+  return null;
+}
+
+/// Columna del tablero (TAREAS / PROCESO / PAUSA / TERMINADO / REVISADO),
+/// con look y comportamiento estilo Trello: título editable, menú de lista
+/// (renombrar/archivar/mover), composer de alta rápida al pie, y arrastre
+/// de tarjetas a una posición exacta dentro o entre columnas.
+class KanbanColumnView extends StatefulWidget {
   final KanbanColumna columna;
   final List<Tarea> tareas;
+  final Map<int, TareaEtiqueta> etiquetasPorId;
+  final Map<int, Miembro> miembrosPorId;
   final void Function(Tarea tarea) onTapTarea;
-  final void Function(Tarea tarea, TareaEstatus nuevoEstatus) onDropTarea;
-  final Widget? accionExtra;
+  final void Function(Tarea tarea, TareaEstatus destino, int posicion)
+  onReordenar;
+  final void Function(String nuevoTitulo) onRenombrar;
+  final VoidCallback onArchivarColumna;
+  final VoidCallback? onMoverIzquierda;
+  final VoidCallback? onMoverDerecha;
+  final void Function(String titulo) onCrearRapida;
+  final void Function(Tarea tarea) onArchivarTarjeta;
+  final void Function(Tarea tarea) onEliminarTarjeta;
+  final void Function(Offset globalPos)? onArrastreGlobalHorizontal;
 
   const KanbanColumnView({
     super.key,
     required this.columna,
     required this.tareas,
+    this.etiquetasPorId = const {},
+    this.miembrosPorId = const {},
     required this.onTapTarea,
-    required this.onDropTarea,
-    this.accionExtra,
+    required this.onReordenar,
+    required this.onRenombrar,
+    required this.onArchivarColumna,
+    this.onMoverIzquierda,
+    this.onMoverDerecha,
+    required this.onCrearRapida,
+    required this.onArchivarTarjeta,
+    required this.onEliminarTarjeta,
+    this.onArrastreGlobalHorizontal,
   });
 
   @override
-  Widget build(BuildContext context) {
+  State<KanbanColumnView> createState() => _KanbanColumnViewState();
+}
+
+class _KanbanColumnViewState extends State<KanbanColumnView> {
+  final _scrollCtrl = ScrollController();
+  final _tituloCtrl = TextEditingController();
+  final _nuevaTarjetaCtrl = TextEditingController();
+  bool _editandoTitulo = false;
+  bool _creandoTarjeta = false;
+  Timer? _autoscrollTimer;
+  double? _autoscrollDireccion;
+
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    _tituloCtrl.dispose();
+    _nuevaTarjetaCtrl.dispose();
+    _autoscrollTimer?.cancel();
+    super.dispose();
+  }
+
+  void _iniciarEdicionTitulo() {
+    _tituloCtrl.text = widget.columna.titulo;
+    setState(() => _editandoTitulo = true);
+  }
+
+  void _confirmarTitulo() {
+    final nuevo = _tituloCtrl.text.trim();
+    if (nuevo.isNotEmpty && nuevo != widget.columna.titulo) {
+      widget.onRenombrar(nuevo);
+    }
+    setState(() => _editandoTitulo = false);
+  }
+
+  void _confirmarNuevaTarjeta() {
+    final titulo = _nuevaTarjetaCtrl.text.trim();
+    if (titulo.isNotEmpty) {
+      widget.onCrearRapida(titulo);
+      _nuevaTarjetaCtrl.clear();
+    }
+    setState(() => _creandoTarjeta = false);
+  }
+
+  void _manejarAutoscroll(Offset globalPos, Rect areaVisible) {
+    final direccion = direccionAutoscroll(
+      posEnEje: globalPos.dy,
+      inicioArea: areaVisible.top,
+      finArea: areaVisible.bottom,
+    );
+    if (direccion == _autoscrollDireccion) return;
+    _autoscrollDireccion = direccion;
+    _autoscrollTimer?.cancel();
+    if (direccion == null) return;
+    _autoscrollTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
+      if (!_scrollCtrl.hasClients) return;
+      final destino = (_scrollCtrl.offset + direccion * 12).clamp(
+        0.0,
+        _scrollCtrl.position.maxScrollExtent,
+      );
+      _scrollCtrl.jumpTo(destino);
+    });
+  }
+
+  void _detenerAutoscroll() {
+    _autoscrollTimer?.cancel();
+    _autoscrollTimer = null;
+    _autoscrollDireccion = null;
+  }
+
+  void _manejarDrop(Tarea arrastrada, int gapIndex) {
+    final origenIdx = widget.tareas.indexWhere((t) => t.id == arrastrada.id);
+    final posicion = (origenIdx != -1 && gapIndex > origenIdx)
+        ? gapIndex - 1
+        : gapIndex;
+    widget.onReordenar(arrastrada, widget.columna.estatus, posicion);
+  }
+
+  Widget _gap(int index) {
     return DragTarget<Tarea>(
-      onWillAcceptWithDetails: (details) =>
-          details.data.estatus != columna.estatus,
-      onAcceptWithDetails: (details) =>
-          onDropTarea(details.data, columna.estatus),
+      onWillAcceptWithDetails: (_) => true,
+      onAcceptWithDetails: (details) {
+        _detenerAutoscroll();
+        _manejarDrop(details.data, index);
+      },
+      onMove: (details) {
+        final box = context.findRenderObject() as RenderBox?;
+        if (box == null) return;
+        _manejarAutoscroll(
+          details.offset,
+          box.localToGlobal(Offset.zero) & box.size,
+        );
+        widget.onArrastreGlobalHorizontal?.call(details.offset);
+      },
+      onLeave: (_) => _detenerAutoscroll(),
       builder: (context, candidateData, rejectedData) {
-        final resaltado = candidateData.isNotEmpty;
-        return Container(
-          width: 280,
-          margin: const EdgeInsets.only(right: 14),
-          decoration: BoxDecoration(
-            color: resaltado ? KanbanColors.accentLight : KanbanColors.bg3,
-            borderRadius: BorderRadius.circular(6),
-            border: resaltado ? Border.all(color: KanbanColors.accent) : null,
+        final activo = candidateData.isNotEmpty;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+          height: activo ? 44 : 8,
+          margin: EdgeInsets.symmetric(
+            vertical: activo ? 3 : 0,
+            horizontal: activo ? 4 : 0,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Container(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(color: columna.color, width: 3),
+          decoration: activo
+              ? BoxDecoration(
+                  color: KanbanColors.accentLight,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: KanbanColors.accent,
+                    style: BorderStyle.solid,
                   ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(columna.icono, size: 15, color: columna.color),
-                    const SizedBox(width: 6),
-                    Text(
-                      columna.titulo,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: KanbanColors.texto,
-                        letterSpacing: 0.3,
-                      ),
+                )
+              : null,
+        );
+      },
+    );
+  }
+
+  Widget _filaTitulo() {
+    return Row(
+      children: [
+        Flexible(
+          child: Text(
+            widget.columna.titulo,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: KanbanColors.texto,
+              letterSpacing: 0.2,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          '${widget.tareas.length}',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: KanbanColors.tdim,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _header() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 16, 10, 12),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: widget.columna.color,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _editandoTitulo
+                ? TextField(
+                    controller: _tituloCtrl,
+                    autofocus: true,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: KanbanColors.texto,
                     ),
-                    const SizedBox(width: 4),
-                    Text(
-                      '${tareas.length}',
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: KanbanColors.texto,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 6,
                       ),
+                      border: OutlineInputBorder(),
                     ),
-                  ],
-                ),
-              ),
-              if (accionExtra != null)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 0),
-                  child: accionExtra,
-                ),
-              Expanded(
-                child: tareas.isEmpty
-                    ? Center(
+                    onSubmitted: (_) => _confirmarTitulo(),
+                    onTapOutside: (_) => _confirmarTitulo(),
+                  )
+                : Draggable<KanbanColumna>(
+                    data: widget.columna,
+                    feedback: Material(
+                      color: Colors.transparent,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: KanbanColors.bg2,
+                          borderRadius: BorderRadius.circular(6),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.15),
+                              blurRadius: 6,
+                            ),
+                          ],
+                        ),
                         child: Text(
-                          'Sin tareas',
+                          widget.columna.titulo,
                           style: TextStyle(
-                            fontSize: 12,
-                            color: KanbanColors.tdim.withValues(alpha: 0.8),
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: KanbanColors.texto,
                           ),
                         ),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-                        itemCount: tareas.length,
-                        itemBuilder: (context, i) {
-                          final t = tareas[i];
-                          return Draggable<Tarea>(
-                            data: t,
+                      ),
+                    ),
+                    childWhenDragging: Opacity(
+                      opacity: 0.3,
+                      child: _filaTitulo(),
+                    ),
+                    child: InkWell(
+                      onTap: _iniciarEdicionTitulo,
+                      child: _filaTitulo(),
+                    ),
+                  ),
+          ),
+          PopupMenuButton<String>(
+            tooltip: 'Menú de la lista',
+            padding: EdgeInsets.zero,
+            icon: Icon(
+              Icons.more_horiz_rounded,
+              size: 17,
+              color: KanbanColors.tdim,
+            ),
+            onSelected: (v) {
+              switch (v) {
+                case 'renombrar':
+                  _iniciarEdicionTitulo();
+                case 'archivar':
+                  widget.onArchivarColumna();
+                case 'izquierda':
+                  widget.onMoverIzquierda?.call();
+                case 'derecha':
+                  widget.onMoverDerecha?.call();
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'renombrar',
+                child: Text('Renombrar lista', style: TextStyle(fontSize: 12.5)),
+              ),
+              const PopupMenuItem(
+                value: 'archivar',
+                child: Text('Archivar lista', style: TextStyle(fontSize: 12.5)),
+              ),
+              PopupMenuItem(
+                value: 'izquierda',
+                enabled: widget.onMoverIzquierda != null,
+                child: const Text(
+                  'Mover a la izquierda',
+                  style: TextStyle(fontSize: 12.5),
+                ),
+              ),
+              PopupMenuItem(
+                value: 'derecha',
+                enabled: widget.onMoverDerecha != null,
+                child: const Text(
+                  'Mover a la derecha',
+                  style: TextStyle(fontSize: 12.5),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _footer() {
+    if (_creandoTarjeta) {
+      return Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _nuevaTarjetaCtrl,
+              autofocus: true,
+              maxLines: 2,
+              minLines: 1,
+              style: const TextStyle(fontSize: 12.5),
+              decoration: const InputDecoration(
+                isDense: true,
+                hintText: 'Título de la tarjeta…',
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (_) => _confirmarNuevaTarjeta(),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                ElevatedButton(
+                  onPressed: _confirmarNuevaTarjeta,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: KanbanColors.toolbarGreen,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                  ),
+                  child: const Text(
+                    'Añadir',
+                    style: TextStyle(fontSize: 12, color: Colors.white),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  onPressed: () => setState(() {
+                    _creandoTarjeta = false;
+                    _nuevaTarjetaCtrl.clear();
+                  }),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => setState(() => _creandoTarjeta = true),
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 9, horizontal: 8),
+          child: Row(
+            children: [
+              Icon(Icons.add_rounded, size: 17, color: KanbanColors.tdim),
+              SizedBox(width: 6),
+              Text(
+                'Añadir tarjeta',
+                style: TextStyle(fontSize: 13, color: KanbanColors.tdim),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 280,
+      margin: const EdgeInsets.only(right: 14),
+      decoration: BoxDecoration(
+        color: KanbanColors.bg3,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: KanbanColors.borde),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _header(),
+          Expanded(
+            child: DragTarget<Tarea>(
+              onWillAcceptWithDetails: (_) => true,
+              onAcceptWithDetails: (details) {
+                _detenerAutoscroll();
+                _manejarDrop(details.data, widget.tareas.length);
+              },
+              onMove: (details) {
+                final box = context.findRenderObject() as RenderBox?;
+                if (box == null) return;
+                _manejarAutoscroll(
+                  details.offset,
+                  box.localToGlobal(Offset.zero) & box.size,
+                );
+                widget.onArrastreGlobalHorizontal?.call(details.offset);
+              },
+              onLeave: (_) => _detenerAutoscroll(),
+              builder: (context, candidateData, rejectedData) {
+                return Stack(
+                  children: [
+                    Positioned.fill(
+                      child: Container(
+                        color: candidateData.isNotEmpty
+                            ? KanbanColors.accentLight.withValues(alpha: 0.35)
+                            : Colors.transparent,
+                      ),
+                    ),
+                    ListView(
+                      controller: _scrollCtrl,
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                      children: [
+                        for (var i = 0; i < widget.tareas.length; i++) ...[
+                          _gap(i),
+                          Draggable<Tarea>(
+                            data: widget.tareas[i],
                             feedback: Material(
                               color: Colors.transparent,
                               child: SizedBox(
                                 width: 256,
-                                child: KanbanTaskCard(tarea: t, onTap: () {}),
+                                child: KanbanTaskCard(
+                                  tarea: widget.tareas[i],
+                                  etiquetas: widget.tareas[i].etiquetaIds
+                                      .map((id) => widget.etiquetasPorId[id])
+                                      .whereType<TareaEtiqueta>()
+                                      .toList(),
+                                  miembros: widget.tareas[i].miembroIds
+                                      .map((id) => widget.miembrosPorId[id])
+                                      .whereType<Miembro>()
+                                      .toList(),
+                                  onTap: () {},
+                                ),
                               ),
                             ),
                             childWhenDragging: Opacity(
                               opacity: 0.35,
-                              child: KanbanTaskCard(tarea: t, onTap: () {}),
+                              child: KanbanTaskCard(
+                                tarea: widget.tareas[i],
+                                onTap: () {},
+                              ),
                             ),
                             child: KanbanTaskCard(
-                              tarea: t,
-                              onTap: () => onTapTarea(t),
+                              tarea: widget.tareas[i],
+                              etiquetas: widget.tareas[i].etiquetaIds
+                                  .map((id) => widget.etiquetasPorId[id])
+                                  .whereType<TareaEtiqueta>()
+                                  .toList(),
+                              miembros: widget.tareas[i].miembroIds
+                                  .map((id) => widget.miembrosPorId[id])
+                                  .whereType<Miembro>()
+                                  .toList(),
+                              onTap: () => widget.onTapTarea(widget.tareas[i]),
+                              onArchivar: () =>
+                                  widget.onArchivarTarjeta(widget.tareas[i]),
+                              onEliminar: () =>
+                                  widget.onEliminarTarjeta(widget.tareas[i]),
                             ),
-                          );
-                        },
-                      ),
-              ),
-            ],
+                          ),
+                        ],
+                        _gap(widget.tareas.length),
+                        if (widget.tareas.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 24),
+                            child: Center(
+                              child: Text(
+                                'Sin tarjetas',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: KanbanColors.tdim.withValues(
+                                    alpha: 0.8,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 4),
+                      ],
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
-        );
-      },
+          _footer(),
+        ],
+      ),
     );
   }
 }

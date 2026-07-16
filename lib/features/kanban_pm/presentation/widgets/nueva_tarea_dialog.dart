@@ -1,22 +1,44 @@
 import 'package:flutter/material.dart';
 import '../../kanban_constants.dart';
 import '../../data/kanban_repository.dart';
+import '../../domain/entities/actividad.dart';
+import '../../domain/entities/miembro.dart';
 import '../../domain/entities/tarea.dart';
+import '../../domain/entities/tarea_plantilla.dart';
 
-/// Diálogo para crear una nueva tarea.
+/// Diálogo para crear una nueva tarea. Si se le pasa [plantilla], precarga
+/// título sugerido/descripción/prioridad/área/checklist de esa plantilla —
+/// el usuario puede seguir editando todo antes de crear la tarjeta.
 class NuevaTareaDialog extends StatefulWidget {
   final KanbanRepository repository;
+  final List<KanbanColumna> columnas;
+  final List<Miembro> miembros;
+  final TareaPlantilla? plantilla;
 
-  const NuevaTareaDialog({super.key, required this.repository});
+  const NuevaTareaDialog({
+    super.key,
+    required this.repository,
+    required this.columnas,
+    required this.miembros,
+    this.plantilla,
+  });
 
   static Future<int?> show(
     BuildContext context, {
     required KanbanRepository repository,
+    required List<KanbanColumna> columnas,
+    required List<Miembro> miembros,
+    TareaPlantilla? plantilla,
   }) {
     return showDialog<int>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => NuevaTareaDialog(repository: repository),
+      builder: (_) => NuevaTareaDialog(
+        repository: repository,
+        columnas: columnas,
+        miembros: miembros,
+        plantilla: plantilla,
+      ),
     );
   }
 
@@ -25,12 +47,21 @@ class NuevaTareaDialog extends StatefulWidget {
 }
 
 class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
-  final _tituloCtrl = TextEditingController();
-  final _descripcionCtrl = TextEditingController();
-  final _responsableCtrl = TextEditingController();
-  String? _grupo;
-  TareaPrioridad _prioridad = TareaPrioridad.media;
-  TareaEstatus _estatus = TareaEstatus.tareas;
+  late final _tituloCtrl = TextEditingController(
+    text: widget.plantilla?.tituloSugerido ?? '',
+  );
+  late final _descripcionCtrl = TextEditingController(
+    text: widget.plantilla?.descripcion ?? '',
+  );
+  final Set<int> _miembroIdsSeleccionados = {};
+  late String? _grupo = (widget.plantilla?.grupo.isNotEmpty ?? false)
+      ? widget.plantilla!.grupo
+      : null;
+  late TareaPrioridad _prioridad =
+      widget.plantilla?.prioridad ?? TareaPrioridad.media;
+  late TareaEstatus _estatus = widget.columnas.isNotEmpty
+      ? widget.columnas.first.estatus
+      : TareaEstatus.tareas;
   DateTime? _fechaVencimiento;
   bool _guardando = false;
 
@@ -38,7 +69,6 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
   void dispose() {
     _tituloCtrl.dispose();
     _descripcionCtrl.dispose();
-    _responsableCtrl.dispose();
     super.dispose();
   }
 
@@ -65,9 +95,14 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
           prioridad: _prioridad,
           grupo: _grupo ?? '',
           asignadoPor: kUsuarioActualDemo,
-          responsable: _responsableCtrl.text.trim(),
+          miembroIds: _miembroIdsSeleccionados.toList(),
           fechaInicio: DateTime.now(),
           fechaVencimiento: _fechaVencimiento,
+          actividades: [
+            for (final (i, desc) in (widget.plantilla?.actividades ?? const [])
+                .indexed)
+              Actividad(id: i + 1, descripcion: desc),
+          ],
         ),
       );
       if (mounted) Navigator.of(context).pop(id);
@@ -96,10 +131,9 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [KanbanColors.accentDark, KanbanColors.accent],
-                ),
+              decoration: BoxDecoration(
+                color: KanbanColors.bg2,
+                border: Border(bottom: BorderSide(color: KanbanColors.borde)),
                 borderRadius: BorderRadius.only(
                   topLeft: Radius.circular(16),
                   topRight: Radius.circular(16),
@@ -108,26 +142,34 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
               child: Row(
                 children: [
-                  const Icon(
-                    Icons.add_task_rounded,
-                    color: Colors.white,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Nueva tarea',
-                      style: TextStyle(
-                        fontSize: 15,
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Nueva tarea',
+                          style: TextStyle(
+                            fontSize: 15,
+                            color: KanbanColors.texto,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        if (widget.plantilla != null)
+                          Text(
+                            'Desde plantilla: ${widget.plantilla!.nombre}',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: KanbanColors.accentDark,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.close_rounded,
-                      color: Colors.white,
+                      color: KanbanColors.tdim,
                       size: 20,
                     ),
                     onPressed: () => Navigator.of(context).pop(),
@@ -144,7 +186,46 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
                   const SizedBox(height: 10),
                   _campo('Descripción', _descripcionCtrl, maxLines: 3),
                   const SizedBox(height: 10),
-                  _campo('Responsable', _responsableCtrl),
+                  Text(
+                    'Miembros',
+                    style: TextStyle(fontSize: 12, color: KanbanColors.tdim),
+                  ),
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final m in widget.miembros)
+                        FilterChip(
+                          avatar: CircleAvatar(
+                            backgroundColor: m.colorAvatar,
+                            child: Text(
+                              m.nombre.isNotEmpty
+                                  ? m.nombre[0].toUpperCase()
+                                  : '?',
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          label: Text(
+                            m.nombre,
+                            style: const TextStyle(fontSize: 11.5),
+                          ),
+                          selected: _miembroIdsSeleccionados.contains(m.id),
+                          selectedColor: m.colorAvatar.withValues(alpha: 0.3),
+                          onSelected: (v) => setState(() {
+                            if (v) {
+                              _miembroIdsSeleccionados.add(m.id);
+                            } else {
+                              _miembroIdsSeleccionados.remove(m.id);
+                            }
+                          }),
+                        ),
+                    ],
+                  ),
                   const SizedBox(height: 10),
                   Row(
                     children: [
@@ -195,7 +276,7 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
                           initialValue: _estatus,
                           decoration: _decoracion('Columna'),
                           items: [
-                            for (final c in kColumnas)
+                            for (final c in widget.columnas)
                               DropdownMenuItem(
                                 value: c.estatus,
                                 child: Text(
@@ -213,7 +294,7 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
                       Expanded(
                         child: OutlinedButton.icon(
                           onPressed: _elegirFecha,
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.event_rounded,
                             size: 16,
                             color: KanbanColors.accent,
@@ -222,14 +303,14 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
                             _fechaVencimiento == null
                                 ? 'Vencimiento'
                                 : '${_fechaVencimiento!.day}/${_fechaVencimiento!.month}/${_fechaVencimiento!.year}',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12.5,
                               color: KanbanColors.texto,
                             ),
                           ),
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 13),
-                            side: const BorderSide(color: KanbanColors.borde),
+                            side: BorderSide(color: KanbanColors.borde),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(10),
                             ),
@@ -275,20 +356,20 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
   InputDecoration _decoracion(String label) {
     return InputDecoration(
       labelText: label,
-      labelStyle: const TextStyle(fontSize: 12, color: KanbanColors.tdim),
+      labelStyle: TextStyle(fontSize: 12, color: KanbanColors.tdim),
       isDense: true,
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
-        borderSide: const BorderSide(color: KanbanColors.borde),
+        borderSide: BorderSide(color: KanbanColors.borde),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
-        borderSide: const BorderSide(color: KanbanColors.borde),
+        borderSide: BorderSide(color: KanbanColors.borde),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
-        borderSide: const BorderSide(color: KanbanColors.accent, width: 2),
+        borderSide: BorderSide(color: KanbanColors.accent, width: 2),
       ),
     );
   }
@@ -297,7 +378,7 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
     return TextField(
       controller: ctrl,
       maxLines: maxLines,
-      style: const TextStyle(fontSize: 13, color: KanbanColors.texto),
+      style: TextStyle(fontSize: 13, color: KanbanColors.texto),
       decoration: _decoracion(label),
     );
   }

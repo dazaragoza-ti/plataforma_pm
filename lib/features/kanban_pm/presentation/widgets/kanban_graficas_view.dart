@@ -20,8 +20,13 @@ const Map<TareaEstatus, Color> _kColorGraficaEstatus = {
 /// (respeta los filtros activos).
 class KanbanGraficasView extends StatelessWidget {
   final List<Tarea> tareas;
+  final List<KanbanColumna> columnas;
 
-  const KanbanGraficasView({super.key, required this.tareas});
+  const KanbanGraficasView({
+    super.key,
+    required this.tareas,
+    required this.columnas,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -107,44 +112,37 @@ class KanbanGraficasView extends StatelessWidget {
 
   Widget _statTile(String label, String valor, IconData icon, Color color) {
     return Container(
-      width: 190,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: KanbanColors.bg2,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: KanbanColors.borde),
-      ),
+      width: 200,
+      padding: const EdgeInsets.all(16),
+      decoration: KanbanColors.cardDecoration(radius: 12),
       child: Row(
         children: [
           Container(
-            width: 38,
-            height: 38,
+            width: 40,
+            height: 40,
             decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.13),
+              color: color.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(10),
             ),
             alignment: Alignment.center,
             child: Icon(icon, size: 19, color: color),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   valor,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+                  style: TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w600,
                     color: KanbanColors.texto,
                   ),
                 ),
                 Text(
                   label,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: KanbanColors.tdim,
-                  ),
+                  style: TextStyle(fontSize: 11.5, color: KanbanColors.tdim),
                 ),
               ],
             ),
@@ -156,24 +154,20 @@ class KanbanGraficasView extends StatelessWidget {
 
   Widget _tarjeta(String titulo, Widget child) {
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: KanbanColors.bg2,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: KanbanColors.borde),
-      ),
+      padding: const EdgeInsets.all(18),
+      decoration: KanbanColors.cardDecoration(radius: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             titulo,
-            style: const TextStyle(
-              fontSize: 13.5,
-              fontWeight: FontWeight.bold,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
               color: KanbanColors.texto,
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           child,
         ],
       ),
@@ -183,7 +177,7 @@ class KanbanGraficasView extends StatelessWidget {
   Widget _graficaEstatus() {
     if (tareas.isEmpty) return _sinDatos();
     final conteos = {
-      for (final col in kColumnas)
+      for (final col in columnas)
         col.estatus: tareas.where((t) => t.estatus == col.estatus).length,
     };
 
@@ -198,7 +192,7 @@ class KanbanGraficasView extends StatelessWidget {
               sectionsSpace: 2,
               centerSpaceRadius: 40,
               sections: [
-                for (final col in kColumnas)
+                for (final col in columnas)
                   if (conteos[col.estatus]! > 0)
                     PieChartSectionData(
                       value: conteos[col.estatus]!.toDouble(),
@@ -221,7 +215,7 @@ class KanbanGraficasView extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              for (final col in kColumnas)
+              for (final col in columnas)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Row(
@@ -238,7 +232,7 @@ class KanbanGraficasView extends StatelessWidget {
                       Expanded(
                         child: Text(
                           col.titulo,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12,
                             color: KanbanColors.texto,
                           ),
@@ -246,7 +240,7 @@ class KanbanGraficasView extends StatelessWidget {
                       ),
                       Text(
                         '${conteos[col.estatus]}',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
                           color: KanbanColors.texto,
@@ -298,7 +292,7 @@ class KanbanGraficasView extends StatelessWidget {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       p.etiqueta,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 10.5,
                         color: KanbanColors.tdim,
                       ),
@@ -330,7 +324,7 @@ class KanbanGraficasView extends StatelessWidget {
   }
 
   Widget _sinDatos() {
-    return const SizedBox(
+    return SizedBox(
       height: 150,
       child: Center(
         child: Text(
