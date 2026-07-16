@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../kanban_constants.dart';
 import '../../data/kanban_repository.dart';
+import '../../domain/entities/actividad.dart';
+import '../../domain/entities/comentario.dart';
 import '../../domain/entities/miembro.dart';
 import '../../domain/entities/tarea.dart';
 import '../../domain/entities/tarea_etiqueta.dart';
+import 'adjunto_imagen.dart';
 
 /// Diálogo de detalle/edición de una tarea: datos generales, las 3
 /// clasificaciones (Generales/Nivel/Importancia), checklist de actividades
@@ -70,6 +74,12 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
   Color _colorNuevaEtiqueta = kColorPaletteEtiquetas.first;
   bool _creandoMiembro = false;
   Color _colorNuevoMiembro = kColorPaletteEtiquetas.first;
+  final _imagePicker = ImagePicker();
+  XFile? _adjuntoPendiente;
+
+  /// Id de la actividad bajo la que se está agregando una subtarea (`null`
+  /// si ninguna, o si el composer visible es el de nivel raíz).
+  int? _padreSubActividad;
 
   @override
   void initState() {
@@ -166,10 +176,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
   Future<void> _crearMiembro() async {
     final nombre = _nuevoMiembroCtrl.text.trim();
     if (nombre.isEmpty) return;
-    final id = await widget.repository.crearMiembro(
-      nombre,
-      _colorNuevoMiembro,
-    );
+    final id = await widget.repository.crearMiembro(nombre, _colorNuevoMiembro);
     _nuevoMiembroCtrl.clear();
     if (!mounted) return;
     setState(() {
@@ -304,11 +311,19 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     }
   }
 
-  Future<void> _agregarActividad() async {
+  Future<void> _agregarActividad({int? padreId}) async {
     final desc = _nuevaActividadCtrl.text.trim();
     if (desc.isEmpty) return;
     _nuevaActividadCtrl.clear();
-    await widget.repository.agregarActividad(widget.tareaId, desc);
+    await widget.repository.agregarActividad(
+      widget.tareaId,
+      desc,
+      padreId: padreId,
+    );
+    setState(() {
+      _creandoActividad = false;
+      _padreSubActividad = null;
+    });
     widget.onRefresh();
     await _cargar();
   }
@@ -325,22 +340,93 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     await _cargar();
   }
 
-  Future<void> _agregarComentario() async {
-    final texto = _comentarioCtrl.text.trim();
-    if (texto.isEmpty) return;
-    _comentarioCtrl.clear();
-    await widget.repository.agregarComentario(widget.tareaId, 'Yo', texto);
+  Future<void> _asignarResponsable(
+    int actividadId, {
+    int? miembroId,
+    String? departamento,
+  }) async {
+    await widget.repository.asignarResponsableActividad(
+      widget.tareaId,
+      actividadId,
+      miembroId: miembroId,
+      departamento: departamento,
+    );
     widget.onRefresh();
     await _cargar();
+  }
+
+  Future<void> _agregarComentario() async {
+    final texto = _comentarioCtrl.text.trim();
+    final adjunto = _adjuntoPendiente;
+    if (texto.isEmpty && adjunto == null) return;
+    _comentarioCtrl.clear();
+    setState(() => _adjuntoPendiente = null);
+    await widget.repository.agregarComentario(
+      widget.tareaId,
+      'Yo',
+      texto,
+      adjuntoPath: adjunto?.path,
+      adjuntoNombre: adjunto?.name,
+    );
+    widget.onRefresh();
+    await _cargar();
+  }
+
+  void _verAdjunto(Comentario c) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(24),
+        child: GestureDetector(
+          onTap: () => Navigator.of(ctx).pop(),
+          child: InteractiveViewer(
+            child: AdjuntoImagen(
+              path: c.adjuntoPath!,
+              width: double.infinity,
+              height: double.infinity,
+              fit: BoxFit.contain,
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _elegirAdjunto() async {
+    try {
+      final archivo = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1200,
+        imageQuality: 85,
+      );
+      if (archivo != null) setState(() => _adjuntoPendiente = archivo);
+    } catch (ex) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No se pudo adjuntar el archivo: $ex'),
+            backgroundColor: KanbanColors.danger,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _eliminarTarea() async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Eliminar tarea'),
+        backgroundColor: KanbanColors.bg2,
+        surfaceTintColor: Colors.transparent,
+        title: Text(
+          'Eliminar tarea',
+          style: TextStyle(color: KanbanColors.texto),
+        ),
         content: Text(
           '¿Eliminar "${_tarea!.titulo}"? Esta acción no se puede deshacer.',
+          style: TextStyle(color: KanbanColors.texto),
         ),
         actions: [
           TextButton(
@@ -408,6 +494,8 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
 
   InputDecoration _decoracion() => InputDecoration(
     isDense: true,
+    filled: true,
+    fillColor: KanbanColors.bg3,
     contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
     border: OutlineInputBorder(
       borderRadius: BorderRadius.circular(9),
@@ -446,7 +534,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                   value: i,
                   child: Text(
                     opciones[i].$1,
-                    style: const TextStyle(fontSize: 12.5),
+                    style: TextStyle(fontSize: 12.5, color: KanbanColors.texto),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -498,10 +586,239 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     );
   }
 
+  Miembro? _buscarMiembro(int id) {
+    for (final m in _catalogoMiembros) {
+      if (m.id == id) return m;
+    }
+    return null;
+  }
+
+  /// Pill que muestra el responsable actual de [a] (persona, departamento o
+  /// "Asignar" si no tiene) y, al tocarla, abre el menú para elegir uno
+  /// nuevo o quitarlo.
+  Widget _chipResponsable(Actividad a) {
+    late final String texto;
+    late final Color color;
+    late final IconData icono;
+    if (a.miembroId != null) {
+      final m = _buscarMiembro(a.miembroId!);
+      texto = m?.nombre ?? 'Persona';
+      color = m?.colorAvatar ?? KanbanColors.tdim;
+      icono = Icons.person_rounded;
+    } else if (a.departamento != null) {
+      texto = a.departamento!;
+      color = KanbanColors.accent;
+      icono = Icons.groups_rounded;
+    } else {
+      texto = 'Asignar';
+      color = KanbanColors.tdim;
+      icono = Icons.person_add_alt_rounded;
+    }
+    return PopupMenuButton<String>(
+      tooltip: 'Responsable de esta subtarea',
+      padding: EdgeInsets.zero,
+      onSelected: (v) {
+        if (v == '_quitar') {
+          _asignarResponsable(a.id);
+        } else if (v.startsWith('m:')) {
+          _asignarResponsable(a.id, miembroId: int.parse(v.substring(2)));
+        } else if (v.startsWith('d:')) {
+          _asignarResponsable(a.id, departamento: v.substring(2));
+        }
+      },
+      itemBuilder: (context) => [
+        if (a.tieneResponsable)
+          const PopupMenuItem(
+            value: '_quitar',
+            child: Text('Quitar responsable', style: TextStyle(fontSize: 12.5)),
+          ),
+        PopupMenuItem(
+          enabled: false,
+          height: 28,
+          child: Text(
+            'PERSONA',
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.bold,
+              color: KanbanColors.tdim,
+            ),
+          ),
+        ),
+        for (final m in _catalogoMiembros)
+          PopupMenuItem(
+            value: 'm:${m.id}',
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 9,
+                  backgroundColor: m.colorAvatar,
+                  child: Text(
+                    m.nombre.isNotEmpty ? m.nombre[0].toUpperCase() : '?',
+                    style: const TextStyle(fontSize: 9, color: Colors.white),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(m.nombre, style: const TextStyle(fontSize: 12.5)),
+              ],
+            ),
+          ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          enabled: false,
+          height: 28,
+          child: Text(
+            'DEPARTAMENTO',
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.bold,
+              color: KanbanColors.tdim,
+            ),
+          ),
+        ),
+        for (final g in kGruposDemo)
+          PopupMenuItem(
+            value: 'd:$g',
+            child: Text(g, style: const TextStyle(fontSize: 12.5)),
+          ),
+      ],
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withValues(alpha: 0.5)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icono, size: 12, color: color),
+            const SizedBox(width: 4),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 80),
+              child: Text(
+                texto,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Composer inline para agregar una actividad: en la raíz si [padreId] es
+  /// `null`, o como subtarea de esa actividad si no.
+  Widget _composerActividad({int? padreId}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _nuevaActividadCtrl,
+              autofocus: true,
+              onSubmitted: (_) => _agregarActividad(padreId: padreId),
+              style: TextStyle(fontSize: 12.5, color: KanbanColors.texto),
+              decoration: _decoracion().copyWith(
+                hintText: padreId == null
+                    ? 'Descripción de la actividad…'
+                    : 'Descripción de la subtarea…',
+              ),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.check_circle_rounded, color: KanbanColors.ok),
+            onPressed: () => _agregarActividad(padreId: padreId),
+          ),
+          IconButton(
+            icon: Icon(Icons.close_rounded, color: KanbanColors.tdim, size: 18),
+            onPressed: () => setState(() {
+              _padreSubActividad = null;
+              _creandoActividad = false;
+              _nuevaActividadCtrl.clear();
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Una fila del árbol de actividades: checkbox, descripción, pill de
+  /// responsable, botón para delegar una subtarea y para eliminarla —
+  /// dibujada recursivamente para cualquier profundidad de delegación.
+  Widget _filaActividad(Actividad a, {int profundidad = 0}) {
+    final hijasVisibles = a.subActividades.where(
+      (h) => !_ocultarCompletados || !h.terminada,
+    );
+    return Padding(
+      padding: EdgeInsets.only(left: profundidad * 18.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Checkbox(
+                value: a.terminada,
+                activeColor: KanbanColors.toolbarTeal,
+                onChanged: (_) => _toggleActividad(a.id),
+              ),
+              Expanded(
+                child: Text(
+                  a.descripcion,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: a.terminada ? KanbanColors.tdim : KanbanColors.texto,
+                    decoration: a.terminada ? TextDecoration.lineThrough : null,
+                  ),
+                ),
+              ),
+              _chipResponsable(a),
+              IconButton(
+                tooltip: 'Delegar subtarea',
+                icon: Icon(
+                  Icons.subdirectory_arrow_right_rounded,
+                  size: 16,
+                  color: _padreSubActividad == a.id
+                      ? KanbanColors.accent
+                      : KanbanColors.tdim,
+                ),
+                onPressed: () => setState(() {
+                  _creandoActividad = false;
+                  _padreSubActividad = _padreSubActividad == a.id ? null : a.id;
+                  _nuevaActividadCtrl.clear();
+                }),
+              ),
+              IconButton(
+                icon: Icon(
+                  Icons.close_rounded,
+                  size: 15,
+                  color: KanbanColors.tdim,
+                ),
+                onPressed: () => _eliminarActividad(a.id),
+              ),
+            ],
+          ),
+          if (_padreSubActividad == a.id) _composerActividad(padreId: a.id),
+          for (final hija in hijasVisibles)
+            _filaActividad(hija, profundidad: profundidad + 1),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = _tarea;
     return Dialog(
+      backgroundColor: KanbanColors.bg2,
+      surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       insetPadding: const EdgeInsets.all(16),
       child: ConstrainedBox(
@@ -598,9 +915,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                               ),
                             ),
                             style: OutlinedButton.styleFrom(
-                              side: BorderSide(
-                                color: KanbanColors.toolbarTeal,
-                              ),
+                              side: BorderSide(color: KanbanColors.toolbarTeal),
                             ),
                           ),
                           const SizedBox(height: 10),
@@ -613,7 +928,10 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                     _fechaInicio == null
                                         ? 'Hora'
                                         : _hora(_fechaInicio!),
-                                    style: const TextStyle(fontSize: 12.5),
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      color: KanbanColors.texto,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -625,7 +943,10 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                     _fechaInicio == null
                                         ? 'Fecha inicio'
                                         : _fecha(_fechaInicio!),
-                                    style: const TextStyle(fontSize: 12.5),
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      color: KanbanColors.texto,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -637,7 +958,10 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                     _fechaFin == null
                                         ? 'Fecha fin'
                                         : _fecha(_fechaFin!),
-                                    style: const TextStyle(fontSize: 12.5),
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      color: KanbanColors.texto,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -664,7 +988,10 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                 FilterChip(
                                   label: Text(
                                     et.nombre,
-                                    style: const TextStyle(fontSize: 11.5),
+                                    style: TextStyle(
+                                      fontSize: 11.5,
+                                      color: KanbanColors.texto,
+                                    ),
                                   ),
                                   selected: _etiquetaIdsSeleccionadas.contains(
                                     et.id,
@@ -680,11 +1007,20 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   onSelected: (_) => _toggleEtiqueta(et.id),
                                 ),
                               ActionChip(
-                                avatar: const Icon(Icons.add_rounded, size: 15),
-                                label: const Text(
-                                  'Nueva',
-                                  style: TextStyle(fontSize: 11.5),
+                                avatar: Icon(
+                                  Icons.add_rounded,
+                                  size: 15,
+                                  color: KanbanColors.texto,
                                 ),
+                                label: Text(
+                                  'Nueva',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: KanbanColors.texto,
+                                  ),
+                                ),
+                                backgroundColor: KanbanColors.bg3,
+                                side: BorderSide(color: KanbanColors.borde),
                                 onPressed: () => setState(
                                   () => _creandoEtiqueta = !_creandoEtiqueta,
                                 ),
@@ -699,7 +1035,10 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   child: TextField(
                                     controller: _nuevaEtiquetaCtrl,
                                     autofocus: true,
-                                    style: const TextStyle(fontSize: 12.5),
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      color: KanbanColors.texto,
+                                    ),
                                     decoration: _decoracion().copyWith(
                                       hintText: 'Nombre de la etiqueta…',
                                     ),
@@ -721,17 +1060,15 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                               children: [
                                 for (final c in kColorPaletteEtiquetas)
                                   InkWell(
-                                    onTap: () => setState(
-                                      () => _colorNuevaEtiqueta = c,
-                                    ),
+                                    onTap: () =>
+                                        setState(() => _colorNuevaEtiqueta = c),
                                     child: Container(
                                       width: 22,
                                       height: 22,
                                       decoration: BoxDecoration(
                                         color: c,
                                         shape: BoxShape.circle,
-                                        border:
-                                            _colorNuevaEtiqueta == c
+                                        border: _colorNuevaEtiqueta == c
                                             ? Border.all(
                                                 color: KanbanColors.texto,
                                                 width: 2,
@@ -807,7 +1144,10 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   value: g,
                                   child: Text(
                                     g,
-                                    style: const TextStyle(fontSize: 12.5),
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      color: KanbanColors.texto,
+                                    ),
                                   ),
                                 ),
                             ],
@@ -839,7 +1179,10 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                           TextField(
                             controller: _descripcionCtrl,
                             maxLines: 3,
-                            style: const TextStyle(fontSize: 12.5),
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              color: KanbanColors.texto,
+                            ),
                             decoration: _decoracion().copyWith(
                               contentPadding: const EdgeInsets.all(10),
                               filled: true,
@@ -878,22 +1221,36 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   ),
                                   label: Text(
                                     m.nombre,
-                                    style: const TextStyle(fontSize: 11.5),
+                                    style: TextStyle(
+                                      fontSize: 11.5,
+                                      color: KanbanColors.texto,
+                                    ),
                                   ),
                                   selected: _miembroIdsSeleccionados.contains(
                                     m.id,
                                   ),
+                                  backgroundColor: KanbanColors.bg3,
                                   selectedColor: m.colorAvatar.withValues(
                                     alpha: 0.3,
                                   ),
+                                  side: BorderSide(color: KanbanColors.borde),
                                   onSelected: (_) => _toggleMiembro(m.id),
                                 ),
                               ActionChip(
-                                avatar: const Icon(Icons.add_rounded, size: 15),
-                                label: const Text(
-                                  'Nuevo',
-                                  style: TextStyle(fontSize: 11.5),
+                                avatar: Icon(
+                                  Icons.add_rounded,
+                                  size: 15,
+                                  color: KanbanColors.texto,
                                 ),
+                                label: Text(
+                                  'Nuevo',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: KanbanColors.texto,
+                                  ),
+                                ),
+                                backgroundColor: KanbanColors.bg3,
+                                side: BorderSide(color: KanbanColors.borde),
                                 onPressed: () => setState(
                                   () => _creandoMiembro = !_creandoMiembro,
                                 ),
@@ -908,7 +1265,10 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   child: TextField(
                                     controller: _nuevoMiembroCtrl,
                                     autofocus: true,
-                                    style: const TextStyle(fontSize: 12.5),
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      color: KanbanColors.texto,
+                                    ),
                                     decoration: _decoracion().copyWith(
                                       hintText: 'Nombre de la persona…',
                                     ),
@@ -930,17 +1290,15 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                               children: [
                                 for (final c in kColorPaletteEtiquetas)
                                   InkWell(
-                                    onTap: () => setState(
-                                      () => _colorNuevoMiembro = c,
-                                    ),
+                                    onTap: () =>
+                                        setState(() => _colorNuevoMiembro = c),
                                     child: Container(
                                       width: 22,
                                       height: 22,
                                       decoration: BoxDecoration(
                                         color: c,
                                         shape: BoxShape.circle,
-                                        border:
-                                            _colorNuevoMiembro == c
+                                        border: _colorNuevoMiembro == c
                                             ? Border.all(
                                                 color: KanbanColors.texto,
                                                 width: 2,
@@ -999,8 +1357,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                       children: [
                                         Checkbox(
                                           value: seleccionada,
-                                          activeColor:
-                                              KanbanColors.toolbarTeal,
+                                          activeColor: KanbanColors.toolbarTeal,
                                           onChanged: bloqueada
                                               ? null
                                               : (_) =>
@@ -1067,7 +1424,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                               ),
                               const SizedBox(width: 6),
                               Text(
-                                'ACTIVIDADES (${t.actividadesTerminadas}/${t.actividades.length})',
+                                'ACTIVIDADES (${t.actividadesTerminadas}/${t.actividadesTotales})',
                                 style: TextStyle(
                                   fontSize: 12.5,
                                   fontWeight: FontWeight.bold,
@@ -1084,7 +1441,10 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   _ocultarCompletados
                                       ? 'Mostrar completados'
                                       : 'Ocultar completados',
-                                  style: const TextStyle(fontSize: 11.5),
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: KanbanColors.texto,
+                                  ),
                                 ),
                               ),
                             ],
@@ -1092,69 +1452,27 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                           for (final a in t.actividades.where(
                             (a) => !_ocultarCompletados || !a.terminada,
                           ))
-                            Row(
-                              children: [
-                                Checkbox(
-                                  value: a.terminada,
-                                  activeColor: KanbanColors.toolbarTeal,
-                                  onChanged: (_) => _toggleActividad(a.id),
-                                ),
-                                Expanded(
-                                  child: Text(
-                                    a.descripcion,
-                                    style: TextStyle(
-                                      fontSize: 12.5,
-                                      color: a.terminada
-                                          ? KanbanColors.tdim
-                                          : KanbanColors.texto,
-                                      decoration: a.terminada
-                                          ? TextDecoration.lineThrough
-                                          : null,
-                                    ),
-                                  ),
-                                ),
-                                IconButton(
-                                  icon: Icon(
-                                    Icons.close_rounded,
-                                    size: 15,
-                                    color: KanbanColors.tdim,
-                                  ),
-                                  onPressed: () => _eliminarActividad(a.id),
-                                ),
-                              ],
-                            ),
+                            _filaActividad(a),
                           const SizedBox(height: 6),
                           if (_creandoActividad)
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: TextField(
-                                    controller: _nuevaActividadCtrl,
-                                    autofocus: true,
-                                    onSubmitted: (_) => _agregarActividad(),
-                                    style: const TextStyle(fontSize: 12.5),
-                                    decoration: _decoracion().copyWith(
-                                      hintText: 'Descripción de la actividad…',
-                                    ),
-                                  ),
-                                ),
-                                IconButton(
-                                  icon: Icon(
-                                    Icons.check_circle_rounded,
-                                    color: KanbanColors.ok,
-                                  ),
-                                  onPressed: _agregarActividad,
-                                ),
-                              ],
-                            )
+                            _composerActividad()
                           else
                             OutlinedButton.icon(
-                              onPressed: () =>
-                                  setState(() => _creandoActividad = true),
-                              icon: const Icon(Icons.add_rounded, size: 15),
-                              label: const Text(
+                              onPressed: () => setState(() {
+                                _creandoActividad = true;
+                                _padreSubActividad = null;
+                              }),
+                              icon: Icon(
+                                Icons.add_rounded,
+                                size: 15,
+                                color: KanbanColors.texto,
+                              ),
+                              label: Text(
                                 'Crear actividad',
-                                style: TextStyle(fontSize: 12),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: KanbanColors.texto,
+                                ),
                               ),
                             ),
                           const SizedBox(height: 16),
@@ -1192,18 +1510,86 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   children: [
                                     Text(
                                       c.autor,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: 11.5,
                                         fontWeight: FontWeight.bold,
+                                        color: KanbanColors.texto,
                                       ),
                                     ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      c.contenido,
-                                      style: const TextStyle(fontSize: 12.5),
-                                    ),
+                                    if (c.contenido.isNotEmpty) ...[
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        c.contenido,
+                                        style: TextStyle(
+                                          fontSize: 12.5,
+                                          color: KanbanColors.texto,
+                                        ),
+                                      ),
+                                    ],
+                                    if (c.adjuntoPath != null) ...[
+                                      const SizedBox(height: 6),
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: InkWell(
+                                          onTap: () => _verAdjunto(c),
+                                          child: AdjuntoImagen(
+                                            path: c.adjuntoPath!,
+                                            width: 120,
+                                            height: 90,
+                                          ),
+                                        ),
+                                      ),
+                                      if (c.adjuntoNombre != null) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          c.adjuntoNombre!,
+                                          style: TextStyle(
+                                            fontSize: 10.5,
+                                            color: KanbanColors.tdim,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
                                   ],
                                 ),
+                              ),
+                            ),
+                          if (_adjuntoPendiente != null)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Row(
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: AdjuntoImagen(
+                                      path: _adjuntoPendiente!.path,
+                                      width: 44,
+                                      height: 44,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      _adjuntoPendiente!.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        color: KanbanColors.tdim,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: Icon(
+                                      Icons.close_rounded,
+                                      size: 16,
+                                      color: KanbanColors.tdim,
+                                    ),
+                                    onPressed: () => setState(
+                                      () => _adjuntoPendiente = null,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           Container(
@@ -1218,11 +1604,16 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   child: TextField(
                                     controller: _comentarioCtrl,
                                     onSubmitted: (_) => _agregarComentario(),
-                                    style: const TextStyle(fontSize: 12.5),
-                                    decoration: const InputDecoration(
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      color: KanbanColors.texto,
+                                    ),
+                                    decoration: InputDecoration(
                                       isDense: true,
-                                      hintText:
-                                          'Escribe un comentario, pega o arrastra un archivo',
+                                      hintText: 'Escribe un comentario…',
+                                      hintStyle: TextStyle(
+                                        color: KanbanColors.tdim,
+                                      ),
                                       border: InputBorder.none,
                                     ),
                                   ),
@@ -1231,9 +1622,12 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   icon: Icon(
                                     Icons.attach_file_rounded,
                                     size: 18,
-                                    color: KanbanColors.tdim,
+                                    color: _adjuntoPendiente != null
+                                        ? KanbanColors.accent
+                                        : KanbanColors.tdim,
                                   ),
-                                  onPressed: null,
+                                  tooltip: 'Adjuntar imagen',
+                                  onPressed: _elegirAdjunto,
                                 ),
                                 IconButton(
                                   icon: Icon(

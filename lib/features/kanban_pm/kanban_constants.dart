@@ -123,6 +123,29 @@ class KanbanColors {
     borderRadius: BorderRadius.circular(radius),
     border: Border.all(color: borde),
   );
+
+  /// Estilo de [SegmentedButton] con la paleta propia del módulo (acento
+  /// naranja) en vez del azul del `ColorScheme` global de la app — sin
+  /// esto, el segmento seleccionado hereda `colorScheme.primary` del tema
+  /// ambiente, que no combina con el resto del tablero y, al ser un azul
+  /// saturado con texto blanco por defecto, dificulta leer la etiqueta.
+  static ButtonStyle segmentedButtonStyle() {
+    Color fondo(Set<WidgetState> states) => states.contains(WidgetState.selected)
+        ? accentLight
+        : Colors.transparent;
+    Color texto2(Set<WidgetState> states) =>
+        states.contains(WidgetState.selected) ? accentDark : texto;
+    BorderSide borde2(Set<WidgetState> states) => BorderSide(
+      color: states.contains(WidgetState.selected) ? accent : borde,
+    );
+    return ButtonStyle(
+      visualDensity: VisualDensity.compact,
+      backgroundColor: WidgetStateProperty.resolveWith(fondo),
+      foregroundColor: WidgetStateProperty.resolveWith(texto2),
+      iconColor: WidgetStateProperty.resolveWith(texto2),
+      side: WidgetStateProperty.resolveWith(borde2),
+    );
+  }
 }
 
 enum TareaEstatus { tareas, proceso, pausa, terminado, revisado }

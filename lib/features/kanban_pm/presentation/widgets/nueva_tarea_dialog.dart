@@ -53,7 +53,9 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
   late final _descripcionCtrl = TextEditingController(
     text: widget.plantilla?.descripcion ?? '',
   );
-  final Set<int> _miembroIdsSeleccionados = {};
+  late final Set<int> _miembroIdsSeleccionados = {
+    ...?widget.plantilla?.miembroIds,
+  };
   late String? _grupo = (widget.plantilla?.grupo.isNotEmpty ?? false)
       ? widget.plantilla!.grupo
       : null;
@@ -96,12 +98,15 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
           grupo: _grupo ?? '',
           asignadoPor: kUsuarioActualDemo,
           miembroIds: _miembroIdsSeleccionados.toList(),
+          etiquetaIds: widget.plantilla?.etiquetaIds ?? const [],
+          portada: widget.plantilla?.portada,
           fechaInicio: DateTime.now(),
           fechaVencimiento: _fechaVencimiento,
+          // El repositorio reasigna estos ids al crear la tarea (ver
+          // `crearTarea`); el `0` es solo un placeholder.
           actividades: [
-            for (final (i, desc) in (widget.plantilla?.actividades ?? const [])
-                .indexed)
-              Actividad(id: i + 1, descripcion: desc),
+            for (final desc in widget.plantilla?.actividades ?? const [])
+              Actividad(id: 0, descripcion: desc),
           ],
         ),
       );
@@ -123,6 +128,8 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      backgroundColor: KanbanColors.bg2,
+      surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       insetPadding: const EdgeInsets.all(16),
       child: ConstrainedBox(
@@ -212,10 +219,15 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
                           ),
                           label: Text(
                             m.nombre,
-                            style: const TextStyle(fontSize: 11.5),
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: KanbanColors.texto,
+                            ),
                           ),
                           selected: _miembroIdsSeleccionados.contains(m.id),
+                          backgroundColor: KanbanColors.bg3,
                           selectedColor: m.colorAvatar.withValues(alpha: 0.3),
+                          side: BorderSide(color: KanbanColors.borde),
                           onSelected: (v) => setState(() {
                             if (v) {
                               _miembroIdsSeleccionados.add(m.id);
@@ -239,7 +251,10 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
                                 value: g,
                                 child: Text(
                                   g,
-                                  style: const TextStyle(fontSize: 13),
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: KanbanColors.texto,
+                                  ),
                                 ),
                               ),
                           ],
@@ -257,7 +272,10 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
                                 value: p,
                                 child: Text(
                                   p.etiqueta,
-                                  style: const TextStyle(fontSize: 13),
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: KanbanColors.texto,
+                                  ),
                                 ),
                               ),
                           ],
@@ -281,7 +299,10 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
                                 value: c.estatus,
                                 child: Text(
                                   c.titulo,
-                                  style: const TextStyle(fontSize: 13),
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: KanbanColors.texto,
+                                  ),
                                 ),
                               ),
                           ],
@@ -358,6 +379,8 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
       labelText: label,
       labelStyle: TextStyle(fontSize: 12, color: KanbanColors.tdim),
       isDense: true,
+      filled: true,
+      fillColor: KanbanColors.bg3,
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),

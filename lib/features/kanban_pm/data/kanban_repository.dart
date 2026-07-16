@@ -15,6 +15,8 @@ import '../kanban_constants.dart';
 /// implements KanbanRepository`) sin tocar la capa de presentación — igual
 /// que se hizo para `bitacora_pintura`.
 abstract class KanbanRepository {
+  /// Busca por título, área, nombre de miembro asignado o texto de
+  /// cualquier subtarea (a cualquier profundidad del árbol de actividades).
   Future<List<Tarea>> listarTareas({String busqueda = ''});
 
   Future<int> crearTarea(Tarea tarea);
@@ -31,13 +33,38 @@ abstract class KanbanRepository {
 
   Future<void> actualizarTarea(Tarea tarea);
 
-  Future<int> agregarActividad(int tareaId, String descripcion);
+  /// Agrega una subtarea. Si [padreId] es `null` se agrega al nivel raíz de
+  /// la tarea; si no, se agrega como subtarea de la actividad con ese id
+  /// (a cualquier profundidad del árbol) — así el responsable de una
+  /// subtarea puede a su vez delegar partes de su trabajo.
+  Future<int> agregarActividad(
+    int tareaId,
+    String descripcion, {
+    int? padreId,
+  });
 
   Future<void> toggleActividad(int tareaId, int actividadId);
 
   Future<void> eliminarActividad(int tareaId, int actividadId);
 
-  Future<void> agregarComentario(int tareaId, String autor, String contenido);
+  /// Asigna (o limpia, si ambos vienen `null`) el responsable de una
+  /// subtarea — persona o departamento, excluyentes entre sí. Puede dejar
+  /// a la tarea auto-pausada mientras el responsable no la resuelva; ver
+  /// [Tarea.pausadaPorSubtarea].
+  Future<void> asignarResponsableActividad(
+    int tareaId,
+    int actividadId, {
+    int? miembroId,
+    String? departamento,
+  });
+
+  Future<void> agregarComentario(
+    int tareaId,
+    String autor,
+    String contenido, {
+    String? adjuntoPath,
+    String? adjuntoNombre,
+  });
 
   // Columnas (listas) del tablero.
   Future<List<KanbanColumna>> listarColumnas();
@@ -345,7 +372,8 @@ class InMemoryKanbanRepository implements KanbanRepository {
                           .nombre
                           .toLowerCase()
                           .contains(like),
-                    ),
+                    ) ||
+                    _actividadesContienen(t.actividades, like),
               )
               .toList();
     final resultado = List<Tarea>.of(base)
@@ -358,7 +386,16 @@ class InMemoryKanbanRepository implements KanbanRepository {
     await _latencia();
     final id = _nextTareaId++;
     final enColumna = _tareas.where((t) => t.estatus == tarea.estatus).length;
-    _tareas.add(tarea.copyWith(id: id, orden: enColumna));
+    // Reasigna ids de actividad frescos (en vez de confiar en los que traiga
+    // `tarea`, p. ej. desde una plantilla): son locales al formulario que
+    // creó la tarea, así que podrían repetirse con el id que `_nextActividadId`
+    // le dé después a una actividad agregada desde el detalle de la tarjeta.
+    final actividades = [
+      for (final a in tarea.actividades) a.copyWith(id: _nextActividadId++),
+    ];
+    _tareas.add(
+      tarea.copyWith(id: id, orden: enColumna, actividades: actividades),
+    );
     return id;
   }
 
@@ -480,14 +517,18 @@ class InMemoryKanbanRepository implements KanbanRepository {
   }
 
   @override
-  Future<int> agregarActividad(int tareaId, String descripcion) async {
+  Future<int> agregarActividad(
+    int tareaId,
+    String descripcion, {
+    int? padreId,
+  }) async {
     await _latencia();
     final idx = _indice(tareaId);
     final id = _nextActividadId++;
-    final actividades = [
-      ..._tareas[idx].actividades,
-      Actividad(id: id, descripcion: descripcion),
-    ];
+    final nueva = Actividad(id: id, descripcion: descripcion);
+    final actividades = padreId == null
+        ? [..._tareas[idx].actividades, nueva]
+        : _conSubactividadAgregada(_tareas[idx].actividades, padreId, nueva);
     _tareas[idx] = _tareas[idx].copyWith(actividades: actividades);
     return id;
   }
@@ -496,28 +537,146 @@ class InMemoryKanbanRepository implements KanbanRepository {
   Future<void> toggleActividad(int tareaId, int actividadId) async {
     await _latencia();
     final idx = _indice(tareaId);
-    final actividades = _tareas[idx].actividades.map((a) {
-      return a.id == actividadId ? a.copyWith(terminada: !a.terminada) : a;
-    }).toList();
+    final actividades = _conActividadTransformada(
+      _tareas[idx].actividades,
+      actividadId,
+      (a) => a.copyWith(terminada: !a.terminada),
+    );
     _tareas[idx] = _tareas[idx].copyWith(actividades: actividades);
+    _recalcularBloqueoPorSubtareas(tareaId);
   }
 
   @override
   Future<void> eliminarActividad(int tareaId, int actividadId) async {
     await _latencia();
     final idx = _indice(tareaId);
-    final actividades = _tareas[idx].actividades
-        .where((a) => a.id != actividadId)
-        .toList();
+    final actividades = _sinActividad(_tareas[idx].actividades, actividadId);
     _tareas[idx] = _tareas[idx].copyWith(actividades: actividades);
+    _recalcularBloqueoPorSubtareas(tareaId);
+  }
+
+  @override
+  Future<void> asignarResponsableActividad(
+    int tareaId,
+    int actividadId, {
+    int? miembroId,
+    String? departamento,
+  }) async {
+    await _latencia();
+    final idx = _indice(tareaId);
+    final actividades = _conActividadTransformada(
+      _tareas[idx].actividades,
+      actividadId,
+      (a) => a.conResponsable(miembroId: miembroId, departamento: departamento),
+    );
+    _tareas[idx] = _tareas[idx].copyWith(actividades: actividades);
+    _recalcularBloqueoPorSubtareas(tareaId);
+  }
+
+  /// Recorre el árbol de [lista] buscando la actividad con [id] y devuelve
+  /// una copia del árbol con esa actividad reemplazada por
+  /// `transformar(actividad)` — el resto del árbol (hermanas, ancestros,
+  /// subárboles ajenos) se preserva tal cual.
+  List<Actividad> _conActividadTransformada(
+    List<Actividad> lista,
+    int id,
+    Actividad Function(Actividad) transformar,
+  ) {
+    return [
+      for (final a in lista)
+        if (a.id == id)
+          transformar(a)
+        else
+          a.copyWith(
+            subActividades: _conActividadTransformada(
+              a.subActividades,
+              id,
+              transformar,
+            ),
+          ),
+    ];
+  }
+
+  /// Igual que [_conActividadTransformada] pero agregando [nueva] como
+  /// hija de la actividad con id [padreId], donde sea que esté en el árbol.
+  List<Actividad> _conSubactividadAgregada(
+    List<Actividad> lista,
+    int padreId,
+    Actividad nueva,
+  ) {
+    return [
+      for (final a in lista)
+        if (a.id == padreId)
+          a.copyWith(subActividades: [...a.subActividades, nueva])
+        else
+          a.copyWith(
+            subActividades: _conSubactividadAgregada(
+              a.subActividades,
+              padreId,
+              nueva,
+            ),
+          ),
+    ];
+  }
+
+  /// Quita la actividad con [id] (y todo su subárbol) de donde esté en
+  /// [lista].
+  List<Actividad> _sinActividad(List<Actividad> lista, int id) {
+    return [
+      for (final a in lista)
+        if (a.id != id)
+          a.copyWith(subActividades: _sinActividad(a.subActividades, id)),
+    ];
+  }
+
+  /// `true` si la descripción de alguna actividad del árbol (a cualquier
+  /// profundidad) contiene [like] — usado por la búsqueda del tablero para
+  /// que también encuentre tarjetas por el texto de sus subtareas.
+  bool _actividadesContienen(List<Actividad> lista, String like) {
+    for (final a in lista) {
+      if (a.descripcion.toLowerCase().contains(like)) return true;
+      if (_actividadesContienen(a.subActividades, like)) return true;
+    }
+    return false;
+  }
+
+  /// Auto-pausa/reanuda la tarea según si su árbol de subtareas sigue
+  /// teniendo algún responsable pendiente — ver [Tarea.pausadaPorSubtarea].
+  /// No toca tareas ya cerradas ni una pausa que el usuario haya elegido a
+  /// mano (esas no tienen `pausadaPorSubtarea` en `true`).
+  void _recalcularBloqueoPorSubtareas(int tareaId) {
+    final idx = _indice(tareaId);
+    final t = _tareas[idx];
+    if (t.estatus == TareaEstatus.terminado ||
+        t.estatus == TareaEstatus.revisado) {
+      return;
+    }
+    final bloqueada = t.tieneSubtareaBloqueante;
+    if (bloqueada && t.estatus != TareaEstatus.pausa) {
+      _tareas[idx] = t.copyWith(
+        estatus: TareaEstatus.pausa,
+        pausadaPorSubtarea: true,
+        estatusAntesDePausa: t.estatus,
+      );
+    } else if (!bloqueada &&
+        t.pausadaPorSubtarea &&
+        t.estatus == TareaEstatus.pausa) {
+      _tareas[idx] = t.copyWith(
+        estatus: t.estatusAntesDePausa ?? TareaEstatus.proceso,
+        pausadaPorSubtarea: false,
+        limpiarEstatusAntesDePausa: true,
+      );
+    }
   }
 
   @override
   Future<void> agregarComentario(
     int tareaId,
     String autor,
-    String contenido,
-  ) async {
+    String contenido, {
+    String? adjuntoPath,
+    String? adjuntoNombre,
+  }) async {
     await _latencia();
     final idx = _indice(tareaId);
     final comentarios = [
@@ -527,6 +686,8 @@ class InMemoryKanbanRepository implements KanbanRepository {
         autor: autor,
         contenido: contenido,
         fecha: DateTime.now(),
+        adjuntoPath: adjuntoPath,
+        adjuntoNombre: adjuntoNombre,
       ),
     ];
     _tareas[idx] = _tareas[idx].copyWith(comentarios: comentarios);

@@ -6,19 +6,19 @@ import '../../../domain/entities/tarea.dart';
 /// Ancho de un día en la línea de tiempo, alto de fila y alto de barra del
 /// Gantt. Constantes compartidas por el layout puro y los widgets que lo
 /// pintan, para que ambos midan exactamente lo mismo.
-const double kGanttDayWidth = 32;
-const double kGanttRowHeight = 48;
-const double kGanttBarHeight = 20;
-const double kGanttRealBarHeight = 10;
-const double kGanttHeaderHeight = 44;
-const double kGanttTitleColumnWidth = 220;
+const double kGanttDayWidth = 40;
+const double kGanttRowHeight = 56;
+const double kGanttBarHeight = 30;
+const double kGanttHeaderHeight = 52;
+const double kGanttTitleColumnWidth = 240;
+const double kGanttSeccionEspacio = 28;
 
 /// Niveles de zoom del Gantt: cuánto mide un día en píxeles y con qué
 /// granularidad se etiqueta el encabezado.
 enum GanttZoom {
-  dia(dayWidth: 32),
-  semana(dayWidth: 12),
-  mes(dayWidth: 4);
+  dia(dayWidth: 40),
+  semana(dayWidth: 16),
+  mes(dayWidth: 6);
 
   final double dayWidth;
   const GanttZoom({required this.dayWidth});
@@ -119,14 +119,18 @@ GanttLayout calcularGanttLayout({
 
   final filas = <GanttFila>[];
   for (final col in columnas) {
-    final enColumna =
-        conFechas.where((t) => t.estatus == col.estatus).toList()
-          ..sort((a, b) => a.fechaInicio!.compareTo(b.fechaInicio!));
+    final enColumna = conFechas.where((t) => t.estatus == col.estatus).toList()
+      ..sort((a, b) => a.fechaInicio!.compareTo(b.fechaInicio!));
     for (final t in enColumna) {
       filas.add(GanttFila(tarea: t, columna: col));
     }
   }
 
+  // Dos cronogramas independientes (planeado / real) comparten el mismo
+  // orden de filas y la misma escala de días, pero cada uno es su propio
+  // bloque de una barra por fila — nada de apilar dos barras en una misma
+  // fila. `margenSuperior` centra esa única barra dentro de su fila.
+  final margenSuperior = (kGanttRowHeight - kGanttBarHeight) / 2;
   final barras = <int, Rect>{};
   final barrasReales = <int, Rect>{};
   final realesEnCurso = <int>{};
@@ -136,7 +140,7 @@ GanttLayout calcularGanttLayout({
     final diasDesdeInicio = ini.difference(minFecha).inDays;
     final duracionDias = duracionDiasDe(t);
     final x = diasDesdeInicio * dayWidth;
-    final y = i * kGanttRowHeight + 6;
+    final y = i * kGanttRowHeight + margenSuperior;
     final width = duracionDias * dayWidth;
     barras[t.id] = Rect.fromLTWH(x, y, width, kGanttBarHeight);
 
@@ -147,12 +151,11 @@ GanttLayout calcularGanttLayout({
       if (finReal.isBefore(iniReal)) finReal = iniReal;
       final xReal = iniReal.difference(minFecha).inDays * dayWidth;
       final duracionReal = finReal.difference(iniReal).inDays + 1;
-      final yReal = y + kGanttBarHeight + 3;
       barrasReales[t.id] = Rect.fromLTWH(
         xReal,
-        yReal,
+        y,
         duracionReal * dayWidth,
-        kGanttRealBarHeight,
+        kGanttBarHeight,
       );
       if (enCurso) realesEnCurso.add(t.id);
     }
@@ -168,4 +171,35 @@ GanttLayout calcularGanttLayout({
     realesEnCurso: realesEnCurso,
     sinFechas: sinFechas,
   );
+}
+
+/// `true` si dejar que [dependienteId] dependa de [predecesoraId] (i.e.
+/// agregar `predecesoraId` a `dependeDeIds` de la tarea [dependienteId])
+/// cerraría un ciclo — o sea, si `predecesoraId` ya depende, directa o
+/// transitivamente, de `dependienteId`. Se usa tanto al elegir
+/// dependencias desde el detalle de la tarea como al arrastrar un
+/// conector entre barras del Gantt.
+///
+/// Guard de ciclos por *camino* (no un `Set` global de visitados): un
+/// grafo en diamante (dos ramas llegando al mismo ancestro) no debe
+/// cortar la búsqueda antes de tiempo solo porque esa tarea ya se visitó
+/// por la otra rama.
+bool creariaCicloDependencia(
+  List<Tarea> tareas, {
+  required int dependienteId,
+  required int predecesoraId,
+}) {
+  final visitados = <int>{};
+  bool dfs(int actualId) {
+    if (actualId == dependienteId) return true;
+    if (!visitados.add(actualId)) return false;
+    final idx = tareas.indexWhere((x) => x.id == actualId);
+    if (idx == -1) return false;
+    for (final depId in tareas[idx].dependeDeIds) {
+      if (dfs(depId)) return true;
+    }
+    return false;
+  }
+
+  return dfs(predecesoraId);
 }

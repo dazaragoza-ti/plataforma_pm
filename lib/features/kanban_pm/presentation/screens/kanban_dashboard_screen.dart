@@ -1,18 +1,22 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import '../../kanban_constants.dart';
 import '../../data/kanban_repository.dart';
+import '../../domain/entities/actividad.dart';
 import '../../domain/entities/miembro.dart';
 import '../../domain/entities/tarea.dart';
 import '../../domain/entities/tarea_etiqueta.dart';
+import '../widgets/etiquetas_dialog.dart';
 import '../widgets/kanban_column.dart';
 import '../widgets/kanban_gantt/kanban_gantt_view.dart';
 import '../widgets/kanban_graficas_view.dart';
+import '../widgets/kanban_lista_view.dart';
 import '../widgets/nueva_tarea_dialog.dart';
 import '../widgets/plantillas_dialog.dart';
 import '../widgets/tarea_detail_dialog.dart';
 
-enum _Vista { kanban, graficas, gantt }
+enum _Vista { kanban, lista, graficas, gantt }
 
 /// Tablero Kanban: barra de herramientas (buscador, vistas, filtros) y
 /// columnas TAREAS / PROCESO / PAUSA / TERMINADO / REVISADO, replicando el
@@ -47,6 +51,13 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
   List<Miembro> _miembros = [];
   bool _cargando = true;
 
+  /// Solo la carga inicial muestra el spinner de pantalla completa: los
+  /// refrescos posteriores (mover una tarjeta, arrastrar una barra del
+  /// Gantt, crear una tarea…) actualizan `_tareas` en el sitio sin
+  /// desmontar la vista activa — desmontarla reseteaba el scroll/zoom del
+  /// Gantt y se sentía como si la página completa se recargara.
+  bool _primeraCarga = true;
+
   _Vista _vista = _Vista.kanban;
   bool _misTareas = false;
   bool _soloPendientes = true;
@@ -61,20 +72,15 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
     for (final e in _etiquetas) e.id: e,
   };
 
-  Map<int, Miembro> get _miembrosPorId => {
-    for (final m in _miembros) m.id: m,
-  };
+  Map<int, Miembro> get _miembrosPorId => {for (final m in _miembros) m.id: m};
 
   /// Id del miembro "yo" (usuario de la demo) resuelto una sola vez contra
   /// el catálogo, con `-1` de respaldo seguro si no hay match.
   int get _miIdDemo => _miembros
       .firstWhere(
         (m) => m.nombre == kUsuarioActualDemo,
-        orElse: () => const Miembro(
-          id: -1,
-          nombre: '',
-          colorAvatar: Colors.transparent,
-        ),
+        orElse: () =>
+            const Miembro(id: -1, nombre: '', colorAvatar: Colors.transparent),
       )
       .id;
 
@@ -107,7 +113,7 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
   }
 
   Future<void> _cargar() async {
-    setState(() => _cargando = true);
+    if (_primeraCarga) setState(() => _cargando = true);
     try {
       var tareas = await _repo.listarTareas(busqueda: _searchCtrl.text);
       final columnasArchivadas = _columnas
@@ -115,13 +121,17 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
           .map((c) => c.estatus)
           .toSet();
       tareas = tareas
-          .where(
-            (t) => !t.archivada && !columnasArchivadas.contains(t.estatus),
-          )
+          .where((t) => !t.archivada && !columnasArchivadas.contains(t.estatus))
           .toList();
       if (_misTareas) {
         final miId = _miIdDemo;
-        tareas = tareas.where((t) => t.miembroIds.contains(miId)).toList();
+        tareas = tareas
+            .where(
+              (t) =>
+                  t.miembroIds.contains(miId) ||
+                  _tengoSubtareaPendiente(t.actividades, miId),
+            )
+            .toList();
       }
       if (_soloPendientes) {
         tareas = tareas
@@ -151,7 +161,12 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
     } catch (ex) {
       if (mounted) _toast('Error al cargar: $ex', ok: false);
     } finally {
-      if (mounted) setState(() => _cargando = false);
+      if (mounted) {
+        setState(() {
+          _cargando = false;
+          _primeraCarga = false;
+        });
+      }
     }
   }
 
@@ -196,6 +211,11 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
     }
   }
 
+  Future<void> _abrirEtiquetas() async {
+    await EtiquetasDialog.show(context, repository: _repo);
+    await _cargar();
+  }
+
   Future<void> _abrirPlantillas() async {
     final elegida = await PlantillasDialog.show(context, repository: _repo);
     if (elegida == null || !mounted) return;
@@ -238,10 +258,7 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
       destinoActual.insert(pos, t.copyWith(estatus: nuevoEstatus));
       for (var i = 0; i < destinoActual.length; i++) {
         final idx = _tareas.indexWhere((x) => x.id == destinoActual[i].id);
-        _tareas[idx] = _tareas[idx].copyWith(
-          estatus: nuevoEstatus,
-          orden: i,
-        );
+        _tareas[idx] = _tareas[idx].copyWith(estatus: nuevoEstatus, orden: i);
       }
       if (origen != nuevoEstatus) {
         final origenActual = _tareas.where((x) => x.estatus == origen).toList()
@@ -282,14 +299,10 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
     try {
       await _repo.archivarTarea(t.id, true);
       await _cargar();
-      _toastAccion(
-        'Tarjeta archivada',
-        'Deshacer',
-        () async {
-          await _repo.archivarTarea(t.id, false);
-          await _cargar();
-        },
-      );
+      _toastAccion('Tarjeta archivada', 'Deshacer', () async {
+        await _repo.archivarTarea(t.id, false);
+        await _cargar();
+      });
     } catch (ex) {
       _toast('Error: $ex', ok: false);
     }
@@ -299,8 +312,16 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Eliminar tarjeta'),
-        content: Text('¿Eliminar "${t.titulo}"? Esta acción no se puede deshacer.'),
+        backgroundColor: KanbanColors.bg2,
+        surfaceTintColor: Colors.transparent,
+        title: Text(
+          'Eliminar tarjeta',
+          style: TextStyle(color: KanbanColors.texto),
+        ),
+        content: Text(
+          '¿Eliminar "${t.titulo}"? Esta acción no se puede deshacer.',
+          style: TextStyle(color: KanbanColors.texto),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -321,13 +342,52 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
     try {
       await _repo.eliminarTarea(t.id);
       await _cargar();
+      _toastAccion('Tarjeta eliminada', 'Deshacer', () async {
+        // Recreación ligera: nueva id, no restaura enlaces de otras
+        // tareas que dependían de esta (el repositorio ya los limpió).
+        await _repo.crearTarea(t.copyWith());
+        await _cargar();
+      });
+    } catch (ex) {
+      _toast('Error: $ex', ok: false);
+    }
+  }
+
+  /// Mueve, archiva o elimina varias tarjetas a la vez — usado por la
+  /// barra de selección de la vista Lista. Recorre los ids uno por uno
+  /// (el repositorio en memoria no tiene una operación de lote nativa) y
+  /// recién al final refresca una sola vez, para no repintar el tablero
+  /// entre cada tarjeta.
+  Future<void> _moverTareasEnLote(
+    List<int> ids,
+    TareaEstatus nuevoEstatus,
+  ) async {
+    try {
+      for (final id in ids) {
+        await _repo.moverTarea(id, nuevoEstatus);
+      }
+      await _cargar();
+      _toast(
+        '${ids.length} ${ids.length == 1 ? 'tarjeta movida' : 'tarjetas movidas'}',
+      );
+    } catch (ex) {
+      _toast('Error: $ex', ok: false);
+    }
+  }
+
+  Future<void> _archivarTareasEnLote(List<int> ids) async {
+    try {
+      for (final id in ids) {
+        await _repo.archivarTarea(id, true);
+      }
+      await _cargar();
       _toastAccion(
-        'Tarjeta eliminada',
+        '${ids.length} ${ids.length == 1 ? 'tarjeta archivada' : 'tarjetas archivadas'}',
         'Deshacer',
         () async {
-          // Recreación ligera: nueva id, no restaura enlaces de otras
-          // tareas que dependían de esta (el repositorio ya los limpió).
-          await _repo.crearTarea(t.copyWith());
+          for (final id in ids) {
+            await _repo.archivarTarea(id, false);
+          }
           await _cargar();
         },
       );
@@ -336,7 +396,32 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
     }
   }
 
-  Future<void> _renombrarColumna(TareaEstatus estatus, String nuevoTitulo) async {
+  Future<void> _eliminarTareasEnLote(List<int> ids) async {
+    try {
+      final respaldo = _tareas.where((t) => ids.contains(t.id)).toList();
+      for (final id in ids) {
+        await _repo.eliminarTarea(id);
+      }
+      await _cargar();
+      _toastAccion(
+        '${ids.length} ${ids.length == 1 ? 'tarjeta eliminada' : 'tarjetas eliminadas'}',
+        'Deshacer',
+        () async {
+          for (final t in respaldo) {
+            await _repo.crearTarea(t.copyWith());
+          }
+          await _cargar();
+        },
+      );
+    } catch (ex) {
+      _toast('Error: $ex', ok: false);
+    }
+  }
+
+  Future<void> _renombrarColumna(
+    TareaEstatus estatus,
+    String nuevoTitulo,
+  ) async {
     setState(() {
       final idx = _columnas.indexWhere((c) => c.estatus == estatus);
       if (idx != -1) {
@@ -429,10 +514,7 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
     final posicion = gapIndex > origenIdx ? gapIndex - 1 : gapIndex;
     final nuevasVisibles = List.of(visibles);
     final movida = nuevasVisibles.removeAt(origenIdx);
-    nuevasVisibles.insert(
-      posicion.clamp(0, nuevasVisibles.length),
-      movida,
-    );
+    nuevasVisibles.insert(posicion.clamp(0, nuevasVisibles.length), movida);
     final cola = List.of(nuevasVisibles);
     final resultado = [
       for (final c in _columnas) c.archivada ? c : cola.removeAt(0),
@@ -468,7 +550,12 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Listas archivadas'),
+        backgroundColor: KanbanColors.bg2,
+        surfaceTintColor: Colors.transparent,
+        title: Text(
+          'Listas archivadas',
+          style: TextStyle(color: KanbanColors.texto),
+        ),
         content: SizedBox(
           width: 320,
           child: Column(
@@ -477,7 +564,10 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
               for (final c in _columnas.where((c) => c.archivada))
                 ListTile(
                   dense: true,
-                  title: Text(c.titulo),
+                  title: Text(
+                    c.titulo,
+                    style: TextStyle(color: KanbanColors.texto),
+                  ),
                   trailing: TextButton(
                     onPressed: () {
                       Navigator.of(ctx).pop();
@@ -529,7 +619,9 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           return AlertDialog(
-            title: const Text('Filtros'),
+            backgroundColor: KanbanColors.bg2,
+            surfaceTintColor: Colors.transparent,
+            title: Text('Filtros', style: TextStyle(color: KanbanColors.texto)),
             content: SizedBox(
               width: 340,
               child: Column(
@@ -575,9 +667,9 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
                     value: pendientes,
                     onChanged: (v) =>
                         setDialogState(() => pendientes = v ?? true),
-                    title: const Text(
+                    title: Text(
                       'Solo pendientes',
-                      style: TextStyle(fontSize: 13),
+                      style: TextStyle(fontSize: 13, color: KanbanColors.texto),
                     ),
                   ),
                 ],
@@ -621,29 +713,26 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
     VoidCallback? onTap,
     bool active = false,
   }) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 8),
-      child: Tooltip(
-        message: tooltip,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(9),
-          onTap: onTap,
-          child: Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: active ? KanbanColors.accentLight : Colors.transparent,
-              borderRadius: BorderRadius.circular(9),
-              border: Border.all(
-                color: active ? KanbanColors.accent : KanbanColors.borde,
-              ),
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(9),
+        onTap: onTap,
+        child: Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: active ? KanbanColors.accentLight : Colors.transparent,
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(
+              color: active ? KanbanColors.accent : KanbanColors.borde,
             ),
-            alignment: Alignment.center,
-            child: Icon(
-              icon,
-              size: 18,
-              color: active ? KanbanColors.accentDark : KanbanColors.texto,
-            ),
+          ),
+          alignment: Alignment.center,
+          child: Icon(
+            icon,
+            size: 18,
+            color: active ? KanbanColors.accentDark : KanbanColors.texto,
           ),
         ),
       ),
@@ -656,56 +745,56 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
     required bool active,
     required VoidCallback onTap,
   }) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 8),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(9),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          decoration: BoxDecoration(
-            color: active ? KanbanColors.accentLight : Colors.transparent,
-            borderRadius: BorderRadius.circular(9),
-            border: Border.all(
-              color: active ? KanbanColors.accent : KanbanColors.borde,
-            ),
+    return InkWell(
+      borderRadius: BorderRadius.circular(9),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: active ? KanbanColors.accentLight : Colors.transparent,
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(
+            color: active ? KanbanColors.accent : KanbanColors.borde,
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 15,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 15,
+              color: active ? KanbanColors.accentDark : KanbanColors.texto,
+            ),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
                 color: active ? KanbanColors.accentDark : KanbanColors.texto,
               ),
-              const SizedBox(width: 5),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: active
-                      ? KanbanColors.accentDark
-                      : KanbanColors.texto,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _header() {
+  /// Grupo izquierdo del header: regresar (no-web), título y selector de
+  /// vista. Envuelto en un [Wrap] (no un [Row] rígido) para que, si no
+  /// alcanza el ancho, salte de línea en vez de desbordarse — el caso que
+  /// importa en pantallas angostas (móvil, ventana redimensionada).
+  Widget _headerGrupoIzquierdo() {
     final archivadas = _columnas.where((c) => c.archivada).length;
-    return Container(
-      decoration: BoxDecoration(
-        color: KanbanColors.bg2,
-        border: Border(bottom: BorderSide(color: KanbanColors.borde)),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-      child: Row(
-        children: [
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 10,
+      runSpacing: 8,
+      children: [
+        // El botón de regresar solo tiene sentido en desktop/móvil: en web
+        // el usuario navega con el propio historial del navegador, así que
+        // aquí estorbaría más de lo que ayuda.
+        if (!kIsWeb)
           IconButton(
             padding: EdgeInsets.zero,
             tooltip: 'Regresar al menú',
@@ -716,152 +805,184 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
             ),
             onPressed: () => Navigator.of(context).pop(),
           ),
-          const SizedBox(width: 8),
-          Text(
-            'Kanban PM',
-            style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w600,
-              letterSpacing: -0.2,
-              color: KanbanColors.texto,
+        Text(
+          'Kanban PM',
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w600,
+            letterSpacing: -0.2,
+            color: KanbanColors.texto,
+          ),
+        ),
+        SegmentedButton<_Vista>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(
+              value: _Vista.kanban,
+              icon: Icon(Icons.view_column_rounded, size: 15),
+              label: Text('Kanban'),
+            ),
+            ButtonSegment(
+              value: _Vista.lista,
+              icon: Icon(Icons.view_list_rounded, size: 15),
+              label: Text('Lista'),
+            ),
+            ButtonSegment(
+              value: _Vista.graficas,
+              icon: Icon(Icons.pie_chart_rounded, size: 15),
+              label: Text('Gráficas'),
+            ),
+            ButtonSegment(
+              value: _Vista.gantt,
+              icon: Icon(Icons.view_timeline_rounded, size: 15),
+              label: Text('Gantt'),
+            ),
+          ],
+          selected: {_vista},
+          onSelectionChanged: (s) => setState(() => _vista = s.first),
+          style: KanbanColors.segmentedButtonStyle().copyWith(
+            textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 12)),
+          ),
+        ),
+        if (archivadas > 0)
+          TextButton.icon(
+            onPressed: _abrirListasArchivadas,
+            icon: const Icon(Icons.archive_outlined, size: 14),
+            label: Text(
+              '$archivadas ${archivadas == 1 ? 'lista archivada' : 'listas archivadas'}',
+              style: const TextStyle(fontSize: 11.5),
             ),
           ),
-          const SizedBox(width: 24),
-          SegmentedButton<_Vista>(
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment(
-                value: _Vista.kanban,
-                icon: Icon(Icons.view_column_rounded, size: 15),
-                label: Text('Kanban'),
+      ],
+    );
+  }
+
+  /// Grupo derecho del header: buscador, filtros y acciones. También un
+  /// [Wrap] (alineado a la derecha cuando hay espacio de sobra) por la
+  /// misma razón que el grupo izquierdo.
+  Widget _headerGrupoDerecho() {
+    return Wrap(
+      alignment: WrapAlignment.end,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 10,
+      runSpacing: 8,
+      children: [
+        SizedBox(
+          width: 240,
+          child: TextField(
+            controller: _searchCtrl,
+            onChanged: _onSearchChanged,
+            style: TextStyle(fontSize: 13, color: KanbanColors.texto),
+            decoration: InputDecoration(
+              isDense: true,
+              filled: true,
+              fillColor: KanbanColors.bg3,
+              prefixIcon: Icon(
+                Icons.search_rounded,
+                size: 17,
+                color: KanbanColors.tdim,
               ),
-              ButtonSegment(
-                value: _Vista.graficas,
-                icon: Icon(Icons.pie_chart_rounded, size: 15),
-                label: Text('Gráficas'),
+              hintText: 'Buscar…',
+              hintStyle: TextStyle(color: KanbanColors.tdim, fontSize: 12.5),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 10,
               ),
-              ButtonSegment(
-                value: _Vista.gantt,
-                icon: Icon(Icons.view_timeline_rounded, size: 15),
-                label: Text('Gantt'),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(9),
+                borderSide: BorderSide(color: KanbanColors.borde),
               ),
-            ],
-            selected: {_vista},
-            onSelectionChanged: (s) => setState(() => _vista = s.first),
-            style: ButtonStyle(
-              visualDensity: VisualDensity.compact,
-              textStyle: WidgetStateProperty.all(
-                const TextStyle(fontSize: 12),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(9),
+                borderSide: BorderSide(color: KanbanColors.borde),
               ),
-            ),
-          ),
-          if (archivadas > 0)
-            Padding(
-              padding: const EdgeInsets.only(left: 10),
-              child: TextButton.icon(
-                onPressed: _abrirListasArchivadas,
-                icon: const Icon(Icons.archive_outlined, size: 14),
-                label: Text(
-                  '$archivadas ${archivadas == 1 ? 'lista archivada' : 'listas archivadas'}',
-                  style: const TextStyle(fontSize: 11.5),
-                ),
-              ),
-            ),
-          const Spacer(),
-          SizedBox(
-            width: 240,
-            child: TextField(
-              controller: _searchCtrl,
-              onChanged: _onSearchChanged,
-              style: TextStyle(fontSize: 13, color: KanbanColors.texto),
-              decoration: InputDecoration(
-                isDense: true,
-                prefixIcon: const Icon(Icons.search_rounded, size: 17),
-                hintText: 'Buscar…',
-                hintStyle: TextStyle(
-                  color: KanbanColors.tdim,
-                  fontSize: 12.5,
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(9),
-                  borderSide: BorderSide(color: KanbanColors.borde),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(9),
-                  borderSide: BorderSide(color: KanbanColors.borde),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(9),
-                  borderSide: BorderSide(
-                    color: KanbanColors.accent,
-                    width: 1.5,
-                  ),
-                ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(9),
+                borderSide: BorderSide(color: KanbanColors.accent, width: 1.5),
               ),
             ),
           ),
+        ),
+        _headerIconButton(
+          icon: Icons.tune_rounded,
+          tooltip: 'Filtros',
+          active: _filtrosActivos,
+          onTap: _abrirFiltros,
+        ),
+        _headerToggleChip(
+          icon: Icons.person_rounded,
+          label: 'Mis tareas',
+          active: _misTareas,
+          onTap: () {
+            setState(() => _misTareas = !_misTareas);
+            _cargar();
+          },
+        ),
+        _headerIconButton(
+          icon: KanbanColors.oscuro
+              ? Icons.light_mode_rounded
+              : Icons.dark_mode_rounded,
+          tooltip: KanbanColors.oscuro ? 'Modo claro' : 'Modo oscuro',
+          active: KanbanColors.oscuro,
+          onTap: () => setState(
+            () => KanbanColors.establecerOscuro(!KanbanColors.oscuro),
+          ),
+        ),
+        if (!KanbanColors.oscuro)
           _headerIconButton(
-            icon: Icons.tune_rounded,
-            tooltip: 'Filtros',
-            active: _filtrosActivos,
-            onTap: _abrirFiltros,
-          ),
-          _headerToggleChip(
-            icon: Icons.person_rounded,
-            label: 'Mis tareas',
-            active: _misTareas,
-            onTap: () {
-              setState(() => _misTareas = !_misTareas);
-              _cargar();
-            },
-          ),
-          _headerIconButton(
-            icon: KanbanColors.oscuro
-                ? Icons.light_mode_rounded
-                : Icons.dark_mode_rounded,
-            tooltip: KanbanColors.oscuro ? 'Modo claro' : 'Modo oscuro',
-            active: KanbanColors.oscuro,
+            icon: Icons.palette_outlined,
+            tooltip: 'Cambiar fondo del tablero',
             onTap: () => setState(
-              () => KanbanColors.establecerOscuro(!KanbanColors.oscuro),
+              () => _fondoIdx = (_fondoIdx + 1) % kFondosTablero.length,
             ),
           ),
-          if (!KanbanColors.oscuro)
-            _headerIconButton(
-              icon: Icons.palette_outlined,
-              tooltip: 'Cambiar fondo del tablero',
-              onTap: () => setState(
-                () => _fondoIdx = (_fondoIdx + 1) % kFondosTablero.length,
-              ),
-            ),
-          _headerIconButton(
-            icon: Icons.dashboard_customize_outlined,
-            tooltip: 'Plantillas de tarjeta',
-            onTap: _abrirPlantillas,
-          ),
-          Padding(
-            padding: const EdgeInsets.only(left: 12),
-            child: ElevatedButton.icon(
-              onPressed: _abrirNuevaTarea,
-              icon: const Icon(Icons.add_rounded, size: 17),
-              label: const Text('Nueva tarea', style: TextStyle(fontSize: 13)),
-              style: ElevatedButton.styleFrom(
-                elevation: 0,
-                backgroundColor: KanbanColors.accent,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 11,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(9),
-                ),
-              ),
+        _headerIconButton(
+          icon: Icons.label_outline_rounded,
+          tooltip: 'Etiquetas del tablero',
+          onTap: _abrirEtiquetas,
+        ),
+        _headerIconButton(
+          icon: Icons.dashboard_customize_outlined,
+          tooltip: 'Plantillas de tarjeta',
+          onTap: _abrirPlantillas,
+        ),
+        ElevatedButton.icon(
+          onPressed: _abrirNuevaTarea,
+          icon: const Icon(Icons.add_rounded, size: 17),
+          label: const Text('Nueva tarea', style: TextStyle(fontSize: 13)),
+          style: ElevatedButton.styleFrom(
+            elevation: 0,
+            backgroundColor: KanbanColors.accent,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(9),
             ),
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _header() {
+    return Container(
+      decoration: BoxDecoration(
+        color: KanbanColors.bg2,
+        border: Border(bottom: BorderSide(color: KanbanColors.borde)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+      // Row de dos `Flexible` (no dos `Expanded` de ancho fijo): cada grupo
+      // ocupa solo lo que necesita y el `Wrap` interno absorbe el resto —
+      // así en pantallas anchas el grupo derecho queda pegado a la
+      // izquierda del izquierdo (visual "empujado a la derecha"), y en
+      // angostas ambos grupos pueden partirse en líneas propias sin que el
+      // Row completo se desborde.
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Flexible(child: _headerGrupoIzquierdo()),
+          const SizedBox(width: 10),
+          Flexible(child: _headerGrupoDerecho()),
         ],
       ),
     );
@@ -874,47 +995,56 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
       child: Padding(
         key: _boardKey,
         padding: const EdgeInsets.all(16),
-        child: SingleChildScrollView(
-          controller: _boardHCtrl,
-          scrollDirection: Axis.horizontal,
-          physics: const BouncingScrollPhysics(),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (var i = 0; i < visibles.length; i++) ...[
-                _columnaGap(i),
-                SizedBox(
-                  height: MediaQuery.of(context).size.height - 230,
-                  child: KanbanColumnView(
-                    columna: visibles[i],
-                    tareas: _tareas
-                        .where((t) => t.estatus == visibles[i].estatus)
-                        .toList(),
-                    etiquetasPorId: _etiquetasPorId,
-                    miembrosPorId: _miembrosPorId,
-                    onTapTarea: _abrirDetalle,
-                    onReordenar: _moverTarea,
-                    onRenombrar: (nuevo) =>
-                        _renombrarColumna(visibles[i].estatus, nuevo),
-                    onArchivarColumna: () =>
-                        _archivarColumna(visibles[i].estatus, true),
-                    onMoverIzquierda: i > 0
-                        ? () => _moverColumna(visibles[i].estatus, -1)
-                        : null,
-                    onMoverDerecha: i < visibles.length - 1
-                        ? () => _moverColumna(visibles[i].estatus, 1)
-                        : null,
-                    onCrearRapida: (titulo) =>
-                        _crearTarjetaRapida(visibles[i].estatus, titulo),
-                    onArchivarTarjeta: _archivarTarjeta,
-                    onEliminarTarjeta: _eliminarTarjeta,
-                    onArrastreGlobalHorizontal: _manejarAutoscrollHorizontal,
-                  ),
-                ),
-              ],
-              _columnaGap(visibles.length),
-            ],
-          ),
+        // `LayoutBuilder` en vez de `MediaQuery.size.height - <número mágico>`:
+        // ese número mágico asumía una altura de header fija, que dejó de
+        // ser cierta en cuanto el header pasó a envolver en varias líneas
+        // en pantallas angostas. Aquí se toma el alto real ya disponible.
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              controller: _boardHCtrl,
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var i = 0; i < visibles.length; i++) ...[
+                    _columnaGap(i),
+                    SizedBox(
+                      height: constraints.maxHeight,
+                      child: KanbanColumnView(
+                        columna: visibles[i],
+                        tareas: _tareas
+                            .where((t) => t.estatus == visibles[i].estatus)
+                            .toList(),
+                        etiquetasPorId: _etiquetasPorId,
+                        miembrosPorId: _miembrosPorId,
+                        onTapTarea: _abrirDetalle,
+                        onReordenar: _moverTarea,
+                        onRenombrar: (nuevo) =>
+                            _renombrarColumna(visibles[i].estatus, nuevo),
+                        onArchivarColumna: () =>
+                            _archivarColumna(visibles[i].estatus, true),
+                        onMoverIzquierda: i > 0
+                            ? () => _moverColumna(visibles[i].estatus, -1)
+                            : null,
+                        onMoverDerecha: i < visibles.length - 1
+                            ? () => _moverColumna(visibles[i].estatus, 1)
+                            : null,
+                        onCrearRapida: (titulo) =>
+                            _crearTarjetaRapida(visibles[i].estatus, titulo),
+                        onArchivarTarjeta: _archivarTarjeta,
+                        onEliminarTarjeta: _eliminarTarjeta,
+                        onArrastreGlobalHorizontal:
+                            _manejarAutoscrollHorizontal,
+                      ),
+                    ),
+                  ],
+                  _columnaGap(visibles.length),
+                ],
+              ),
+            );
+          },
         ),
       ),
     );
@@ -933,9 +1063,20 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
             child: _cargando
                 ? const Center(child: CircularProgressIndicator())
                 : switch (_vista) {
+                    _Vista.lista => KanbanListaView(
+                      tareas: _tareas,
+                      columnas: _columnasVisibles,
+                      miembrosPorId: _miembrosPorId,
+                      etiquetasPorId: _etiquetasPorId,
+                      onAbrirTarea: _abrirDetalle,
+                      onMoverSeleccion: _moverTareasEnLote,
+                      onArchivarSeleccion: _archivarTareasEnLote,
+                      onEliminarSeleccion: _eliminarTareasEnLote,
+                    ),
                     _Vista.graficas => KanbanGraficasView(
                       tareas: _tareas,
                       columnas: _columnasVisibles,
+                      miembros: _miembros,
                     ),
                     _Vista.gantt => KanbanGanttView(
                       tareas: _tareas,
@@ -951,4 +1092,16 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
       ),
     );
   }
+}
+
+/// `true` si alguna actividad del árbol (a cualquier profundidad) tiene a
+/// [miembroId] como responsable y sigue sin marcarse terminada — usado
+/// para que "Mis tareas" también muestre tarjetas que no son mías pero
+/// donde tengo una subtarea delegada pendiente.
+bool _tengoSubtareaPendiente(List<Actividad> actividades, int miembroId) {
+  for (final a in actividades) {
+    if (a.miembroId == miembroId && !a.terminada) return true;
+    if (_tengoSubtareaPendiente(a.subActividades, miembroId)) return true;
+  }
+  return false;
 }

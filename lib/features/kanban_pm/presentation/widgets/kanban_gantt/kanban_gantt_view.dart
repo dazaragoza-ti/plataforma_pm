@@ -9,8 +9,18 @@ import 'gantt_critical_path.dart';
 import 'gantt_layout.dart';
 
 const List<String> _kMeses = [
-  'ene', 'feb', 'mar', 'abr', 'may', 'jun',
-  'jul', 'ago', 'sep', 'oct', 'nov', 'dic',
+  'ene',
+  'feb',
+  'mar',
+  'abr',
+  'may',
+  'jun',
+  'jul',
+  'ago',
+  'sep',
+  'oct',
+  'nov',
+  'dic',
 ];
 
 /// Vista "Gantt": cronograma con barras arrastrables/redimensionables y
@@ -38,36 +48,64 @@ class KanbanGanttView extends StatefulWidget {
 
 class _KanbanGanttViewState extends State<KanbanGanttView> {
   final _hCtrlHeader = ScrollController();
-  final _hCtrlBody = ScrollController();
+  final _hCtrlBody = ScrollController(); // bloque "Planeado"
+  final _hCtrlBodyReal = ScrollController(); // bloque "Real"
+  final _lienzoPlaneadoKey = GlobalKey();
+  bool _sincronizandoScroll = false;
   bool _yaCentrado = false;
   GanttZoom _zoom = GanttZoom.dia;
+
+  /// Id de la tarea desde la que se está arrastrando un conector de
+  /// dependencia (`null` si no hay ninguno en curso) y el punto actual del
+  /// arrastre, en coordenadas locales del lienzo del bloque "Planeado".
+  int? _origenConector;
+  Offset? _puntoConector;
 
   @override
   void initState() {
     super.initState();
-    _hCtrlBody.addListener(_sincronizarHeader);
+    _hCtrlBody.addListener(() => _sincronizarScroll(origen: _hCtrlBody));
+    _hCtrlBodyReal.addListener(
+      () => _sincronizarScroll(origen: _hCtrlBodyReal),
+    );
   }
 
   @override
   void dispose() {
-    _hCtrlBody.removeListener(_sincronizarHeader);
     _hCtrlHeader.dispose();
     _hCtrlBody.dispose();
+    _hCtrlBodyReal.dispose();
     super.dispose();
   }
 
-  void _sincronizarHeader() {
-    if (!_hCtrlHeader.hasClients) return;
-    final destino = _hCtrlBody.offset.clamp(
-      0.0,
-      _hCtrlHeader.position.maxScrollExtent,
-    );
-    _hCtrlHeader.jumpTo(destino);
+  /// Mantiene alineados el encabezado de días y los dos bloques del Gantt
+  /// (Planeado / Real): arrastrar cualquiera de los dos cuerpos empuja su
+  /// desplazamiento a los otros dos, para que ambos cronogramas — aunque
+  /// visualmente separados — sigan comparándose sobre la misma columna de
+  /// fechas. El guard evita el eco infinito que causaría cada `jumpTo`
+  /// disparando de nuevo este mismo listener.
+  void _sincronizarScroll({required ScrollController origen}) {
+    if (_sincronizandoScroll || !origen.hasClients) return;
+    _sincronizandoScroll = true;
+    final offset = origen.offset;
+    for (final ctrl in [_hCtrlHeader, _hCtrlBody, _hCtrlBodyReal]) {
+      if (identical(ctrl, origen) || !ctrl.hasClients) continue;
+      ctrl.jumpTo(offset.clamp(0.0, ctrl.position.maxScrollExtent));
+    }
+    _sincronizandoScroll = false;
   }
 
   void _centrarEnHoy(GanttLayout layout) {
     if (_yaCentrado || !_hCtrlBody.hasClients) return;
     _yaCentrado = true;
+    _irAHoy(layout);
+  }
+
+  /// Re-centra el cronograma en la fecha de hoy — a diferencia de
+  /// [_centrarEnHoy] (que solo corre una vez al montar la vista), esta se
+  /// puede llamar en cualquier momento desde el botón "Hoy".
+  void _irAHoy(GanttLayout layout) {
+    if (!_hCtrlBody.hasClients) return;
     final hoy = DateTime.now();
     final dias = DateTime(
       hoy.year,
@@ -91,6 +129,114 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
     );
     await widget.onRefresh();
   }
+
+  /// Convierte una posición global (de puntero) a coordenadas locales del
+  /// lienzo del bloque "Planeado" — el mismo espacio en el que viven
+  /// `layout.barras`, así el punto de arrastre se puede comparar
+  /// directamente contra esos rects para el hit-test al soltar.
+  Offset _aLocal(Offset global) {
+    final caja =
+        _lienzoPlaneadoKey.currentContext?.findRenderObject() as RenderBox?;
+    if (caja == null) return global;
+    return caja.globalToLocal(global);
+  }
+
+  void _iniciarConector(int origenId, Offset global) {
+    setState(() {
+      _origenConector = origenId;
+      _puntoConector = _aLocal(global);
+    });
+  }
+
+  void _actualizarConector(Offset global) {
+    setState(() => _puntoConector = _aLocal(global));
+  }
+
+  Future<void> _confirmarConector(GanttLayout layout) async {
+    final origenId = _origenConector;
+    final punto = _puntoConector;
+    setState(() {
+      _origenConector = null;
+      _puntoConector = null;
+    });
+    if (origenId == null || punto == null) return;
+
+    int? destinoId;
+    for (final entrada in layout.barras.entries) {
+      if (entrada.value.inflate(4).contains(punto)) {
+        destinoId = entrada.key;
+        break;
+      }
+    }
+    if (destinoId == null || destinoId == origenId) return;
+
+    final idx = widget.tareas.indexWhere((t) => t.id == destinoId);
+    if (idx == -1) return;
+    final destino = widget.tareas[idx];
+    if (destino.dependeDeIds.contains(origenId)) return;
+
+    if (creariaCicloDependencia(
+      widget.tareas,
+      dependienteId: destinoId,
+      predecesoraId: origenId,
+    )) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Esa dependencia crearía un ciclo — no se puede crear.',
+            ),
+            backgroundColor: KanbanColors.danger,
+          ),
+        );
+      }
+      return;
+    }
+
+    await widget.repository.actualizarTarea(
+      destino.copyWith(dependeDeIds: [...destino.dependeDeIds, origenId]),
+    );
+    await widget.onRefresh();
+  }
+
+  /// Asa circular en el borde derecho de la barra planeada de [fila]: al
+  /// arrastrarla hasta soltar sobre otra barra, esa otra tarea pasa a
+  /// depender de [fila] (flecha de conector en el próximo refresco).
+  Widget _asaConector(GanttFila fila, Rect rect) {
+    final activo = _origenConector == fila.tarea.id;
+    return Positioned(
+      left: rect.right - 5,
+      top: rect.top + rect.height / 2 - 5,
+      width: 10,
+      height: 10,
+      child: Tooltip(
+        message: 'Arrastra para crear una dependencia',
+        waitDuration: const Duration(milliseconds: 400),
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onPanStart: (d) =>
+                _iniciarConector(fila.tarea.id, d.globalPosition),
+            onPanUpdate: (d) => _actualizarConector(d.globalPosition),
+            onPanEnd: (_) => _confirmarConector(_ultimoLayout!),
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: activo ? KanbanColors.accent : fila.columna.color,
+                border: Border.all(color: Colors.white, width: 1.5),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Última [GanttLayout] calculada por `build()` — el arrastre de un
+  /// conector la necesita en `onPanEnd`, que corre fuera del `build` que la
+  /// originó.
+  GanttLayout? _ultimoLayout;
 
   Widget _encabezadoDias(GanttLayout layout) {
     final limite = layout.inicio.add(Duration(days: layout.totalDias));
@@ -160,7 +306,7 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
         texto,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
-          fontSize: 10.5,
+          fontSize: 12,
           fontWeight: destacada ? FontWeight.bold : FontWeight.normal,
           color: destacada ? KanbanColors.accentDark : KanbanColors.texto,
         ),
@@ -186,12 +332,12 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
         children: [
           Text(
             _kMeses[dia.month - 1],
-            style: TextStyle(fontSize: 8.5, color: KanbanColors.tdim),
+            style: TextStyle(fontSize: 9.5, color: KanbanColors.tdim),
           ),
           Text(
             '${dia.day}',
             style: TextStyle(
-              fontSize: 11,
+              fontSize: 13,
               fontWeight: esHoy ? FontWeight.bold : FontWeight.normal,
               color: esHoy ? KanbanColors.accentDark : KanbanColors.texto,
             ),
@@ -201,25 +347,165 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
     );
   }
 
-  /// Barra "real" (tiempo real transcurrido) bajo la barra planeada: de solo
-  /// lectura, sin arrastre/resize — su único propósito es la comparación
-  /// visual planeado vs. real. Si sigue en curso (sin `fechaFinReal`), se
-  /// dibuja con borde punteado en vez de relleno sólido.
-  Widget _barraReal({required Rect rect, required bool enCurso}) {
-    final color = KanbanColors.texto.withValues(alpha: 0.55);
+  /// Una fila de la columna de títulos (nombre de tarea + punto de color),
+  /// compartida por los dos bloques del Gantt (Planeado / Real) — ambos
+  /// muestran las mismas tareas en el mismo orden, así que basta con una
+  /// sola implementación.
+  Widget _filaTitulo(int index, GanttFila fila) {
+    return Container(
+      height: kGanttRowHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: index.isOdd ? KanbanColors.bg3.withValues(alpha: 0.4) : null,
+        border: Border(
+          bottom: BorderSide(color: KanbanColors.borde),
+          right: BorderSide(color: KanbanColors.borde),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 9,
+            height: 9,
+            decoration: BoxDecoration(
+              color: fila.columna.color,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: InkWell(
+              onTap: () => widget.onAbrirTarea(fila.tarea),
+              child: Text(
+                fila.tarea.titulo,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: KanbanColors.texto,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _columnaTitulos(List<GanttFila> filas) {
+    return SizedBox(
+      width: kGanttTitleColumnWidth,
+      child: Column(
+        children: [
+          for (var i = 0; i < filas.length; i++) _filaTitulo(i, filas[i]),
+        ],
+      ),
+    );
+  }
+
+  /// Franjas alternadas de fondo por fila, compartidas por los dos
+  /// bloques del Gantt.
+  List<Widget> _fondoFilas(int cantidad) {
+    return [
+      for (var i = 0; i < cantidad; i++)
+        Positioned(
+          left: 0,
+          right: 0,
+          top: i * kGanttRowHeight,
+          height: kGanttRowHeight,
+          child: Container(
+            decoration: BoxDecoration(
+              color: i.isOdd ? KanbanColors.bg3.withValues(alpha: 0.4) : null,
+              border: Border(bottom: BorderSide(color: KanbanColors.borde)),
+            ),
+          ),
+        ),
+    ];
+  }
+
+  /// Un bloque completo del Gantt (columna de títulos + línea de tiempo
+  /// propia), usado dos veces: una para "Planeado" y otra para "Real" —
+  /// dos cronogramas separados en vez de una barra apilada bajo otra.
+  Widget _bloqueGantt({
+    required List<GanttFila> filas,
+    required Widget timeline,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _columnaTitulos(filas),
+        Expanded(child: timeline),
+      ],
+    );
+  }
+
+  /// Barra "real" (tiempo real transcurrido): del mismo alto que la barra
+  /// planeada pero claramente separada de ella (fila propia, con espacio de
+  /// por medio) y con un tratamiento visual distinto — relleno tenue del
+  /// color de la columna y borde sólido — para que planeado y real se lean
+  /// como dos cronogramas independientes y no como una sola barra con un
+  /// hilito debajo. De solo lectura: sin arrastre/resize. Si la tarea sigue
+  /// en curso (sin `fechaFinReal`), el borde derecho se pinta punteado en
+  /// vez de cerrado, para marcar que la fecha de fin todavía no existe.
+  Widget _barraReal({
+    required Rect rect,
+    required Color color,
+    required bool enCurso,
+    required String titulo,
+  }) {
+    final bordeColor = color.withValues(alpha: 0.85);
     return Positioned(
       left: rect.left,
       top: rect.top,
       width: rect.width,
       height: rect.height,
-      child: enCurso
-          ? CustomPaint(painter: _BordePunteadoPainter(color: color))
-          : DecoratedBox(
+      child: Tooltip(
+        message: titulo,
+        waitDuration: const Duration(milliseconds: 300),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            DecoratedBox(
               decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(3),
+                color: color.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(6),
+                border: Border(
+                  left: BorderSide(color: bordeColor, width: 1.4),
+                  top: BorderSide(color: bordeColor, width: 1.4),
+                  bottom: BorderSide(color: bordeColor, width: 1.4),
+                  right: enCurso
+                      ? BorderSide.none
+                      : BorderSide(color: bordeColor, width: 1.4),
+                ),
               ),
             ),
+            if (enCurso)
+              Positioned(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                width: 3,
+                child: CustomPaint(
+                  painter: _BordePunteadoVerticalPainter(color: bordeColor),
+                ),
+              ),
+            if (rect.width >= 30)
+              Positioned.fill(
+                child: Center(
+                  child: Text(
+                    'Real',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: color,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -254,34 +540,94 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
     );
   }
 
-  Widget _leyendaChip(String texto, {required Color color, bool punteada = false}) {
+  Widget _leyendaPlaneado() {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           width: 16,
-          height: punteada ? 6 : 10,
+          height: 10,
           decoration: BoxDecoration(
-            color: color,
+            color: KanbanColors.tdim,
             borderRadius: BorderRadius.circular(3),
-            border: punteada ? Border.all(color: color, width: 1) : null,
           ),
         ),
         const SizedBox(width: 6),
-        Text(texto, style: TextStyle(fontSize: 11.5, color: KanbanColors.tdim)),
+        Text(
+          'Planeado',
+          style: TextStyle(fontSize: 11.5, color: KanbanColors.tdim),
+        ),
       ],
     );
   }
 
-  Widget _selectorZoom() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+  Widget _leyendaReal() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 16,
+          height: 10,
+          decoration: BoxDecoration(
+            color: KanbanColors.tdim.withValues(alpha: 0.16),
+            borderRadius: BorderRadius.circular(3),
+            border: Border.all(
+              color: KanbanColors.tdim.withValues(alpha: 0.85),
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          'Real',
+          style: TextStyle(fontSize: 11.5, color: KanbanColors.tdim),
+        ),
+      ],
+    );
+  }
+
+  Widget _selectorZoom({GanttLayout? layout}) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: KanbanColors.cardDecoration(radius: 10),
+      // `Wrap`/`Flexible` en vez de `Row` + `Spacer`: en pantallas angostas
+      // la leyenda y el selector de zoom pueden partirse en líneas propias
+      // en vez de desbordar el contenedor.
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          _leyendaChip('Planeado', color: KanbanColors.accent),
-          const SizedBox(width: 14),
-          _leyendaChip('Real', color: KanbanColors.texto.withValues(alpha: 0.55)),
-          const Spacer(),
+          Flexible(
+            child: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 16,
+              runSpacing: 8,
+              children: [_leyendaPlaneado(), _leyendaReal()],
+            ),
+          ),
+          const SizedBox(width: 12),
+          if (layout != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: OutlinedButton.icon(
+                onPressed: () => _irAHoy(layout),
+                icon: Icon(
+                  Icons.today_rounded,
+                  size: 15,
+                  color: KanbanColors.texto,
+                ),
+                label: Text(
+                  'Hoy',
+                  style: TextStyle(fontSize: 12, color: KanbanColors.texto),
+                ),
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  side: BorderSide(color: KanbanColors.borde),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ),
           SegmentedButton<GanttZoom>(
             showSelectedIcon: false,
             segments: const [
@@ -294,7 +640,7 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
               _zoom = s.first;
               _yaCentrado = false;
             }),
-            style: const ButtonStyle(visualDensity: VisualDensity.compact),
+            style: KanbanColors.segmentedButtonStyle(),
           ),
         ],
       ),
@@ -308,6 +654,7 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
       columnas: widget.columnas,
       dayWidth: _zoom.dayWidth,
     );
+    _ultimoLayout = layout;
     final rutaCritica = calcularRutaCritica(widget.tareas);
 
     if (layout.filas.isEmpty) {
@@ -336,7 +683,7 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
 
     return Column(
       children: [
-        _selectorZoom(),
+        _selectorZoom(layout: layout),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -366,124 +713,126 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
               Divider(height: 1, color: KanbanColors.borde),
               Expanded(
                 child: SingleChildScrollView(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SizedBox(
-                        width: kGanttTitleColumnWidth,
-                        child: Column(
-                          children: [
-                            for (final fila in layout.filas)
-                              Container(
-                                height: kGanttRowHeight,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                ),
-                                decoration: BoxDecoration(
-                                  border: Border(
-                                    bottom: BorderSide(
-                                      color: KanbanColors.borde,
-                                    ),
-                                  ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      width: 8,
-                                      height: 8,
-                                      decoration: BoxDecoration(
-                                        color: fila.columna.color,
-                                        shape: BoxShape.circle,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: InkWell(
-                                        onTap: () =>
-                                            widget.onAbrirTarea(fila.tarea),
-                                        child: Text(
-                                          fila.tarea.titulo,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                          ],
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 14, 12, 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _leyendaPlaneado(),
                         ),
-                      ),
-                      Expanded(
-                        child: SingleChildScrollView(
-                          controller: _hCtrlBody,
-                          scrollDirection: Axis.horizontal,
-                          child: SizedBox(
-                            width: anchoTotal,
-                            height: altoTotal,
-                            child: Stack(
-                              children: [
-                                for (var i = 0; i < layout.filas.length; i++)
-                                  Positioned(
-                                    left: 0,
-                                    right: 0,
-                                    top: i * kGanttRowHeight,
-                                    height: kGanttRowHeight,
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        border: Border(
-                                          bottom: BorderSide(
-                                            color: KanbanColors.borde,
-                                          ),
-                                        ),
-                                      ),
+                        _bloqueGantt(
+                          filas: layout.filas,
+                          timeline: SingleChildScrollView(
+                            controller: _hCtrlBody,
+                            scrollDirection: Axis.horizontal,
+                            child: SizedBox(
+                              width: anchoTotal,
+                              height: altoTotal,
+                              child: Stack(
+                                key: _lienzoPlaneadoKey,
+                                clipBehavior: Clip.none,
+                                children: [
+                                  ..._fondoFilas(layout.filas.length),
+                                  CustomPaint(
+                                    size: Size(anchoTotal, altoTotal),
+                                    painter: GanttConnectorsPainter(
+                                      tareas: layout.filas
+                                          .map((f) => f.tarea)
+                                          .toList(),
+                                      barras: layout.barras,
                                     ),
                                   ),
-                                CustomPaint(
-                                  size: Size(anchoTotal, altoTotal),
-                                  painter: GanttConnectorsPainter(
-                                    tareas: layout.filas
-                                        .map((f) => f.tarea)
-                                        .toList(),
-                                    barras: layout.barras,
-                                  ),
-                                ),
-                                for (final fila in layout.filas)
-                                  GanttBar(
-                                    tarea: fila.tarea,
-                                    rect: layout.barras[fila.tarea.id]!,
-                                    color: fila.columna.color,
-                                    dayWidth: _zoom.dayWidth,
-                                    esCritica: rutaCritica.contains(
-                                      fila.tarea.id,
-                                    ),
-                                    onTap: () =>
-                                        widget.onAbrirTarea(fila.tarea),
-                                    onFechasCambiadas: (ini, fin) =>
-                                        _actualizarFechas(
-                                          fila.tarea,
-                                          ini,
-                                          fin,
-                                        ),
-                                  ),
-                                for (final fila in layout.filas)
-                                  if (layout.barrasReales[fila.tarea.id]
-                                      case final rectReal?)
-                                    _barraReal(
-                                      rect: rectReal,
-                                      enCurso: layout.realesEnCurso.contains(
+                                  for (final fila in layout.filas)
+                                    GanttBar(
+                                      tarea: fila.tarea,
+                                      rect: layout.barras[fila.tarea.id]!,
+                                      color: fila.columna.color,
+                                      dayWidth: _zoom.dayWidth,
+                                      esCritica: rutaCritica.contains(
                                         fila.tarea.id,
                                       ),
+                                      onTap: () =>
+                                          widget.onAbrirTarea(fila.tarea),
+                                      onFechasCambiadas: (ini, fin) =>
+                                          _actualizarFechas(
+                                            fila.tarea,
+                                            ini,
+                                            fin,
+                                          ),
                                     ),
-                              ],
+                                  for (final fila in layout.filas)
+                                    _asaConector(
+                                      fila,
+                                      layout.barras[fila.tarea.id]!,
+                                    ),
+                                  if (_origenConector != null &&
+                                      _puntoConector != null)
+                                    CustomPaint(
+                                      size: Size(anchoTotal, altoTotal),
+                                      painter: _ConectorTemporalPainter(
+                                        origen: layout.barras[_origenConector]!,
+                                        destino: _puntoConector!,
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                        SizedBox(height: kGanttSeccionEspacio),
+                        Divider(color: KanbanColors.borde),
+                        const SizedBox(height: 14),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _leyendaReal(),
+                        ),
+                        _bloqueGantt(
+                          filas: layout.filas,
+                          timeline: SingleChildScrollView(
+                            controller: _hCtrlBodyReal,
+                            scrollDirection: Axis.horizontal,
+                            child: SizedBox(
+                              width: anchoTotal,
+                              height: altoTotal,
+                              child: Stack(
+                                children: [
+                                  ..._fondoFilas(layout.filas.length),
+                                  for (final fila in layout.filas)
+                                    if (layout.barrasReales[fila.tarea.id]
+                                        case final rectReal?)
+                                      _barraReal(
+                                        rect: rectReal,
+                                        color: fila.columna.color,
+                                        titulo: fila.tarea.titulo,
+                                        enCurso: layout.realesEnCurso.contains(
+                                          fila.tarea.id,
+                                        ),
+                                      )
+                                    else
+                                      Positioned(
+                                        left:
+                                            layout.barras[fila.tarea.id]!.left,
+                                        top:
+                                            layout.barras[fila.tarea.id]!.top +
+                                            (kGanttBarHeight - 14) / 2,
+                                        child: Text(
+                                          'Sin iniciar',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontStyle: FontStyle.italic,
+                                            color: KanbanColors.tdim,
+                                          ),
+                                        ),
+                                      ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -496,32 +845,66 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
   }
 }
 
-/// Borde punteado horizontal para la barra "real" de una tarea aún en
-/// curso (sin `fechaFinReal`): distingue de un vistazo "todavía no cierra"
-/// de "ya cerró" sin necesitar otro color.
-class _BordePunteadoPainter extends CustomPainter {
+/// Borde derecho punteado para la barra "real" de una tarea aún en curso
+/// (sin `fechaFinReal`): distingue de un vistazo "todavía no cierra" de "ya
+/// cerró" sin necesitar otro color — el resto del borde (izq/arriba/abajo)
+/// se pinta sólido como de costumbre.
+class _BordePunteadoVerticalPainter extends CustomPainter {
   final Color color;
 
-  const _BordePunteadoPainter({required this.color});
+  const _BordePunteadoVerticalPainter({required this.color});
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..color = color
-      ..strokeWidth = size.height
+      ..strokeWidth = size.width
       ..strokeCap = StrokeCap.round;
-    const anchoGuion = 5.0;
+    const largoGuion = 4.0;
     const espacio = 3.0;
-    final y = size.height / 2;
-    var x = 0.0;
-    while (x < size.width) {
-      final fin = (x + anchoGuion).clamp(0.0, size.width);
-      canvas.drawLine(Offset(x, y), Offset(fin, y), paint);
-      x += anchoGuion + espacio;
+    final x = size.width / 2;
+    var y = 0.0;
+    while (y < size.height) {
+      final fin = (y + largoGuion).clamp(0.0, size.height);
+      canvas.drawLine(Offset(x, y), Offset(x, fin), paint);
+      y += largoGuion + espacio;
     }
   }
 
   @override
-  bool shouldRepaint(covariant _BordePunteadoPainter oldDelegate) =>
+  bool shouldRepaint(covariant _BordePunteadoVerticalPainter oldDelegate) =>
       oldDelegate.color != color;
+}
+
+/// Línea "codo" que sigue al puntero mientras se arrastra un conector de
+/// dependencia desde el borde derecho de una barra planeada — el mismo
+/// estilo de codo+flecha que [GanttConnectorsPainter], pero terminando en
+/// el punto de arrastre en vez de en otra barra.
+class _ConectorTemporalPainter extends CustomPainter {
+  final Rect origen;
+  final Offset destino;
+
+  const _ConectorTemporalPainter({required this.origen, required this.destino});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final linea = Paint()
+      ..color = KanbanColors.accent
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+
+    final inicio = Offset(origen.right, origen.center.dy);
+    final midX = (inicio.dx + destino.dx) / 2;
+    final path = Path()
+      ..moveTo(inicio.dx, inicio.dy)
+      ..lineTo(midX, inicio.dy)
+      ..lineTo(midX, destino.dy)
+      ..lineTo(destino.dx, destino.dy);
+    canvas.drawPath(path, linea);
+    canvas.drawCircle(destino, 4, Paint()..color = KanbanColors.accent);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ConectorTemporalPainter oldDelegate) =>
+      oldDelegate.origen != origen || oldDelegate.destino != destino;
 }

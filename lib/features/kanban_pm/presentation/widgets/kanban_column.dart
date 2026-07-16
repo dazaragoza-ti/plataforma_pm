@@ -234,13 +234,22 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
                       fontWeight: FontWeight.bold,
                       color: KanbanColors.texto,
                     ),
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       isDense: true,
-                      contentPadding: EdgeInsets.symmetric(
+                      filled: true,
+                      fillColor: KanbanColors.bg2,
+                      contentPadding: const EdgeInsets.symmetric(
                         horizontal: 6,
                         vertical: 6,
                       ),
-                      border: OutlineInputBorder(),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(color: KanbanColors.borde),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(color: KanbanColors.accent),
+                      ),
                     ),
                     onSubmitted: (_) => _confirmarTitulo(),
                     onTapOutside: (_) => _confirmarTitulo(),
@@ -348,11 +357,21 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
               autofocus: true,
               maxLines: 2,
               minLines: 1,
-              style: const TextStyle(fontSize: 12.5),
-              decoration: const InputDecoration(
+              style: TextStyle(fontSize: 12.5, color: KanbanColors.texto),
+              decoration: InputDecoration(
                 isDense: true,
+                filled: true,
+                fillColor: KanbanColors.bg2,
                 hintText: 'Título de la tarjeta…',
-                border: OutlineInputBorder(),
+                hintStyle: TextStyle(color: KanbanColors.tdim),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide(color: KanbanColors.borde),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide(color: KanbanColors.accent),
+                ),
               ),
               onSubmitted: (_) => _confirmarNuevaTarjeta(),
             ),

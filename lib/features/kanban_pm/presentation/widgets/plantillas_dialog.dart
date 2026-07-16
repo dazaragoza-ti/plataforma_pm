@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../kanban_constants.dart';
 import '../../data/kanban_repository.dart';
+import '../../domain/entities/miembro.dart';
+import '../../domain/entities/tarea_etiqueta.dart';
 import '../../domain/entities/tarea_plantilla.dart';
 
 /// Diálogo de plantillas: lista las existentes (crear tarjeta / editar /
@@ -28,6 +30,8 @@ class PlantillasDialog extends StatefulWidget {
 
 class _PlantillasDialogState extends State<PlantillasDialog> {
   List<TareaPlantilla> _plantillas = [];
+  List<TareaEtiqueta> _etiquetas = [];
+  List<Miembro> _miembros = [];
   bool _cargando = true;
 
   @override
@@ -37,10 +41,16 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
   }
 
   Future<void> _cargar() async {
-    final plantillas = await widget.repository.listarPlantillas();
+    final resultados = await Future.wait([
+      widget.repository.listarPlantillas(),
+      widget.repository.listarEtiquetas(),
+      widget.repository.listarMiembros(),
+    ]);
     if (!mounted) return;
     setState(() {
-      _plantillas = plantillas;
+      _plantillas = resultados[0] as List<TareaPlantilla>;
+      _etiquetas = resultados[1] as List<TareaEtiqueta>;
+      _miembros = resultados[2] as List<Miembro>;
       _cargando = false;
     });
   }
@@ -49,6 +59,8 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
     final resultado = await _PlantillaFormDialog.show(
       context,
       existente: existente,
+      etiquetas: _etiquetas,
+      miembros: _miembros,
     );
     if (resultado == null) return;
     if (existente == null) {
@@ -63,8 +75,16 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Eliminar plantilla'),
-        content: Text('¿Eliminar la plantilla "${p.nombre}"?'),
+        backgroundColor: KanbanColors.bg2,
+        surfaceTintColor: Colors.transparent,
+        title: Text(
+          'Eliminar plantilla',
+          style: TextStyle(color: KanbanColors.texto),
+        ),
+        content: Text(
+          '¿Eliminar la plantilla "${p.nombre}"?',
+          style: TextStyle(color: KanbanColors.texto),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -89,10 +109,12 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      backgroundColor: KanbanColors.bg2,
+      surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       insetPadding: const EdgeInsets.all(16),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480, maxHeight: 560),
+        constraints: const BoxConstraints(maxWidth: 480, maxHeight: 620),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -140,9 +162,13 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
                       padding: const EdgeInsets.all(32),
                       child: Text(
                         'Aún no hay plantillas. Crea una para reutilizar título, '
-                        'prioridad, área y checklist al dar de alta tarjetas.',
+                        'prioridad, área, etiquetas, miembros y checklist al dar '
+                        'de alta tarjetas.',
                         textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 13, color: KanbanColors.tdim),
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: KanbanColors.tdim,
+                        ),
                       ),
                     )
                   : ListView.separated(
@@ -181,11 +207,27 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
   }
 
   Widget _tile(TareaPlantilla p) {
+    final etiquetasPlantilla = p.etiquetaIds
+        .map((id) => _etiquetas.where((e) => e.id == id))
+        .where((it) => it.isNotEmpty)
+        .map((it) => it.first)
+        .toList();
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: KanbanColors.cardDecoration(radius: 10),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (p.portada != null)
+            Container(
+              width: 6,
+              height: 40,
+              margin: const EdgeInsets.only(right: 10, top: 2),
+              decoration: BoxDecoration(
+                color: p.portada,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -203,11 +245,41 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
                   [
                     if (p.grupo.isNotEmpty) p.grupo,
                     p.prioridad.etiqueta,
+                    if (p.miembroIds.isNotEmpty)
+                      '${p.miembroIds.length} ${p.miembroIds.length == 1 ? 'miembro' : 'miembros'}',
                     if (p.actividades.isNotEmpty)
                       '${p.actividades.length} pendientes en checklist',
                   ].join(' · '),
                   style: TextStyle(fontSize: 11.5, color: KanbanColors.tdim),
                 ),
+                if (etiquetasPlantilla.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    children: [
+                      for (final et in etiquetasPlantilla)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: et.color,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            et.nombre,
+                            style: const TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),
@@ -218,7 +290,11 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
           ),
           IconButton(
             tooltip: 'Eliminar plantilla',
-            icon: Icon(Icons.delete_outline_rounded, size: 18, color: KanbanColors.tdim),
+            icon: Icon(
+              Icons.delete_outline_rounded,
+              size: 18,
+              color: KanbanColors.tdim,
+            ),
             onPressed: () => _eliminar(p),
           ),
           const SizedBox(width: 4),
@@ -245,16 +321,28 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
 /// resultante (con `id: 0` si es nueva; el repositorio le asigna el real).
 class _PlantillaFormDialog extends StatefulWidget {
   final TareaPlantilla? existente;
+  final List<TareaEtiqueta> etiquetas;
+  final List<Miembro> miembros;
 
-  const _PlantillaFormDialog({this.existente});
+  const _PlantillaFormDialog({
+    this.existente,
+    required this.etiquetas,
+    required this.miembros,
+  });
 
   static Future<TareaPlantilla?> show(
     BuildContext context, {
     TareaPlantilla? existente,
+    required List<TareaEtiqueta> etiquetas,
+    required List<Miembro> miembros,
   }) {
     return showDialog<TareaPlantilla>(
       context: context,
-      builder: (_) => _PlantillaFormDialog(existente: existente),
+      builder: (_) => _PlantillaFormDialog(
+        existente: existente,
+        etiquetas: etiquetas,
+        miembros: miembros,
+      ),
     );
   }
 
@@ -278,6 +366,13 @@ class _PlantillaFormDialogState extends State<_PlantillaFormDialog> {
   String? _grupo;
   late TareaPrioridad _prioridad =
       widget.existente?.prioridad ?? TareaPrioridad.media;
+  late final Set<int> _etiquetaIdsSeleccionadas = {
+    ...?widget.existente?.etiquetaIds,
+  };
+  late final Set<int> _miembroIdsSeleccionados = {
+    ...?widget.existente?.miembroIds,
+  };
+  Color? _portada;
 
   @override
   void initState() {
@@ -286,6 +381,7 @@ class _PlantillaFormDialogState extends State<_PlantillaFormDialog> {
     _grupo = (grupoExistente != null && grupoExistente.isNotEmpty)
         ? grupoExistente
         : null;
+    _portada = widget.existente?.portada;
   }
 
   @override
@@ -314,6 +410,9 @@ class _PlantillaFormDialogState extends State<_PlantillaFormDialog> {
         prioridad: _prioridad,
         grupo: _grupo ?? '',
         actividades: actividades,
+        etiquetaIds: _etiquetaIdsSeleccionadas.toList(),
+        miembroIds: _miembroIdsSeleccionados.toList(),
+        portada: _portada,
       ),
     );
   }
@@ -323,6 +422,8 @@ class _PlantillaFormDialogState extends State<_PlantillaFormDialog> {
       labelText: label,
       labelStyle: TextStyle(fontSize: 12, color: KanbanColors.tdim),
       isDense: true,
+      filled: true,
+      fillColor: KanbanColors.bg3,
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
@@ -339,13 +440,30 @@ class _PlantillaFormDialogState extends State<_PlantillaFormDialog> {
     );
   }
 
+  Widget _seccionLabel(String texto) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(
+        texto.toUpperCase(),
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.4,
+          color: KanbanColors.tdim,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      backgroundColor: KanbanColors.bg2,
+      surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       insetPadding: const EdgeInsets.all(16),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 440),
+        constraints: const BoxConstraints(maxWidth: 460, maxHeight: 640),
         child: SingleChildScrollView(
           child: Padding(
             padding: const EdgeInsets.all(20),
@@ -354,7 +472,9 @@ class _PlantillaFormDialogState extends State<_PlantillaFormDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  widget.existente == null ? 'Nueva plantilla' : 'Editar plantilla',
+                  widget.existente == null
+                      ? 'Nueva plantilla'
+                      : 'Editar plantilla',
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.bold,
@@ -391,7 +511,10 @@ class _PlantillaFormDialogState extends State<_PlantillaFormDialog> {
                           for (final g in kGruposDemo)
                             DropdownMenuItem(
                               value: g,
-                              child: Text(g, style: const TextStyle(fontSize: 13)),
+                              child: Text(
+                                g,
+                                style: const TextStyle(fontSize: 13),
+                              ),
                             ),
                         ],
                         onChanged: (v) => setState(() => _grupo = v),
@@ -412,19 +535,151 @@ class _PlantillaFormDialogState extends State<_PlantillaFormDialog> {
                               ),
                             ),
                         ],
-                        onChanged: (v) =>
-                            setState(() => _prioridad = v ?? TareaPrioridad.media),
+                        onChanged: (v) => setState(
+                          () => _prioridad = v ?? TareaPrioridad.media,
+                        ),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 14),
+                _seccionLabel('Etiquetas sugeridas'),
+                if (widget.etiquetas.isEmpty)
+                  Text(
+                    'Aún no hay etiquetas en el tablero.',
+                    style: TextStyle(fontSize: 12, color: KanbanColors.tdim),
+                  )
+                else
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final et in widget.etiquetas)
+                        FilterChip(
+                          label: Text(
+                            et.nombre,
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: KanbanColors.texto,
+                            ),
+                          ),
+                          selected: _etiquetaIdsSeleccionadas.contains(et.id),
+                          backgroundColor: KanbanColors.bg3,
+                          selectedColor: et.color.withValues(alpha: 0.3),
+                          side: BorderSide(color: et.color),
+                          onSelected: (v) => setState(() {
+                            if (v) {
+                              _etiquetaIdsSeleccionadas.add(et.id);
+                            } else {
+                              _etiquetaIdsSeleccionadas.remove(et.id);
+                            }
+                          }),
+                        ),
+                    ],
+                  ),
+                const SizedBox(height: 14),
+                _seccionLabel('Miembros sugeridos'),
+                if (widget.miembros.isEmpty)
+                  Text(
+                    'Aún no hay integrantes en el tablero.',
+                    style: TextStyle(fontSize: 12, color: KanbanColors.tdim),
+                  )
+                else
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final m in widget.miembros)
+                        FilterChip(
+                          avatar: CircleAvatar(
+                            backgroundColor: m.colorAvatar,
+                            child: Text(
+                              m.nombre.isNotEmpty
+                                  ? m.nombre[0].toUpperCase()
+                                  : '?',
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          label: Text(
+                            m.nombre,
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: KanbanColors.texto,
+                            ),
+                          ),
+                          selected: _miembroIdsSeleccionados.contains(m.id),
+                          backgroundColor: KanbanColors.bg3,
+                          selectedColor: m.colorAvatar.withValues(alpha: 0.3),
+                          side: BorderSide(color: KanbanColors.borde),
+                          onSelected: (v) => setState(() {
+                            if (v) {
+                              _miembroIdsSeleccionados.add(m.id);
+                            } else {
+                              _miembroIdsSeleccionados.remove(m.id);
+                            }
+                          }),
+                        ),
+                    ],
+                  ),
+                const SizedBox(height: 14),
+                _seccionLabel('Color de portada'),
+                Wrap(
+                  spacing: 6,
+                  children: [
+                    InkWell(
+                      onTap: () => setState(() => _portada = null),
+                      child: Container(
+                        width: 26,
+                        height: 26,
+                        decoration: BoxDecoration(
+                          color: KanbanColors.bg3,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: _portada == null
+                                ? KanbanColors.texto
+                                : KanbanColors.borde,
+                            width: _portada == null ? 2 : 1,
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.close_rounded,
+                          size: 14,
+                          color: KanbanColors.tdim,
+                        ),
+                      ),
+                    ),
+                    for (final c in kColorPaletteEtiquetas)
+                      InkWell(
+                        onTap: () => setState(() => _portada = c),
+                        child: Container(
+                          width: 26,
+                          height: 26,
+                          decoration: BoxDecoration(
+                            color: c,
+                            shape: BoxShape.circle,
+                            border: _portada == c
+                                ? Border.all(
+                                    color: KanbanColors.texto,
+                                    width: 2,
+                                  )
+                                : null,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                _seccionLabel('Checklist'),
                 TextField(
                   controller: _actividadesCtrl,
                   maxLines: 4,
                   minLines: 2,
                   style: TextStyle(fontSize: 13, color: KanbanColors.texto),
-                  decoration: _decoracion('Checklist (un punto por línea)'),
+                  decoration: _decoracion('Un punto por línea'),
                 ),
                 const SizedBox(height: 18),
                 Row(

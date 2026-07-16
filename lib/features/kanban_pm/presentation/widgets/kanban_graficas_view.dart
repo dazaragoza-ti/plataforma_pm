@@ -1,6 +1,8 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import '../../kanban_constants.dart';
+import '../../domain/entities/actividad.dart';
+import '../../domain/entities/miembro.dart';
 import '../../domain/entities/tarea.dart';
 
 /// Paleta validada (CVD-safe) para la dona de estatus. Distinta de los
@@ -15,21 +17,122 @@ const Map<TareaEstatus, Color> _kColorGraficaEstatus = {
   TareaEstatus.revisado: Color(0xFF28A745),
 };
 
-/// Vista de "Gráficas": KPIs y distribución de tareas por estatus y por
-/// prioridad, calculados sobre la lista de tareas visible en el tablero
-/// (respeta los filtros activos).
-class KanbanGraficasView extends StatelessWidget {
+const _kAnimDuracion = Duration(milliseconds: 450);
+const _kAnimCurva = Curves.easeOutCubic;
+
+/// Vista de "Gráficas": KPIs y distribución de tareas por estatus,
+/// prioridad, carga por integrante, cumplimiento de fechas (planeado vs.
+/// real) y subtareas delegadas, calculados sobre la lista de tareas visible
+/// en el tablero (respeta los filtros activos). Los valores se animan al
+/// cambiar para que un refresco se sienta como una actualización, no un
+/// parpadeo, y toda la vista entra con un fundido suave la primera vez que
+/// se monta (p. ej. al cambiar a esta pestaña).
+class KanbanGraficasView extends StatefulWidget {
   final List<Tarea> tareas;
   final List<KanbanColumna> columnas;
+  final List<Miembro> miembros;
 
   const KanbanGraficasView({
     super.key,
     required this.tareas,
     required this.columnas,
+    this.miembros = const [],
   });
 
   @override
+  State<KanbanGraficasView> createState() => _KanbanGraficasViewState();
+}
+
+class _KanbanGraficasViewState extends State<KanbanGraficasView>
+    with SingleTickerProviderStateMixin {
+  late final _entrada = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 500),
+  )..forward();
+  late final _fundido = CurvedAnimation(
+    parent: _entrada,
+    curve: Curves.easeOut,
+  );
+  late final _deslizamiento = Tween(
+    begin: const Offset(0, 0.04),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: _entrada, curve: Curves.easeOutCubic));
+
+  /// Rango de fechas propio de esta vista (independiente de los filtros
+  /// del tablero): si está activo, todas las gráficas y KPIs de abajo
+  /// (menos la tendencia semanal, que siempre mira las últimas 8 semanas)
+  /// solo consideran tareas cuya `fechaInicio` cae dentro del rango.
+  DateTimeRange? _rango;
+
+  @override
+  void dispose() {
+    _entrada.dispose();
+    super.dispose();
+  }
+
+  Future<void> _elegirRango() async {
+    final ahora = DateTime.now();
+    final elegido = await showDateRangePicker(
+      context: context,
+      firstDate: ahora.subtract(const Duration(days: 365 * 2)),
+      lastDate: ahora.add(const Duration(days: 365 * 2)),
+      initialDateRange: _rango,
+    );
+    if (elegido != null) setState(() => _rango = elegido);
+  }
+
+  String _fecha(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
+  Widget _filtroRango() {
+    final rango = _rango;
+    return Row(
+      children: [
+        OutlinedButton.icon(
+          onPressed: _elegirRango,
+          icon: Icon(
+            Icons.date_range_rounded,
+            size: 16,
+            color: KanbanColors.texto,
+          ),
+          label: Text(
+            rango == null
+                ? 'Filtrar por fecha de inicio'
+                : '${_fecha(rango.start)} – ${_fecha(rango.end)}',
+            style: TextStyle(fontSize: 12, color: KanbanColors.texto),
+          ),
+          style: OutlinedButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            side: BorderSide(color: KanbanColors.borde),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        ),
+        if (rango != null)
+          IconButton(
+            tooltip: 'Quitar filtro de fecha',
+            icon: Icon(Icons.close_rounded, size: 18, color: KanbanColors.tdim),
+            onPressed: () => setState(() => _rango = null),
+          ),
+      ],
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final rango = _rango;
+    final tareas = rango == null
+        ? widget.tareas
+        : widget.tareas.where((t) {
+            final f = t.fechaInicio;
+            if (f == null) return false;
+            return !f.isBefore(rango.start) &&
+                !f.isAfter(rango.end.add(const Duration(days: 1)));
+          }).toList();
+    final columnas = widget.columnas;
+    final miembros = widget.miembros;
+
     final total = tareas.length;
     final completadas = tareas
         .where(
@@ -42,75 +145,143 @@ class KanbanGraficasView extends StatelessWidget {
     final enProceso = tareas
         .where((t) => t.estatus == TareaEstatus.proceso)
         .length;
-    final porcentaje = total == 0 ? 0 : (completadas / total * 100).round();
+    final bloqueadas = tareas.where((t) => t.pausadaPorSubtarea).length;
+    final porcentaje = total == 0 ? 0.0 : (completadas / total * 100);
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
+    return FadeTransition(
+      opacity: _fundido,
+      child: SlideTransition(
+        position: _deslizamiento,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _statTile(
-                'Total de tareas',
-                '$total',
-                Icons.view_kanban_rounded,
-                KanbanColors.accent,
+              _filtroRango(),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  _statTile(
+                    'Total de tareas',
+                    total.toDouble(),
+                    Icons.view_kanban_rounded,
+                    KanbanColors.accent,
+                  ),
+                  _statTile(
+                    'Completadas',
+                    porcentaje,
+                    Icons.check_circle_rounded,
+                    KanbanColors.ok,
+                    sufijo: '%',
+                  ),
+                  _statTile(
+                    'En proceso',
+                    enProceso.toDouble(),
+                    Icons.autorenew_rounded,
+                    const Color(0xFF2196F3),
+                  ),
+                  _statTile(
+                    'Vencidas',
+                    vencidas.toDouble(),
+                    Icons.warning_rounded,
+                    KanbanColors.danger,
+                  ),
+                  _statTile(
+                    'Bloqueadas por subtarea',
+                    bloqueadas.toDouble(),
+                    Icons.pause_circle_outline_rounded,
+                    const Color(0xFFFD7E14),
+                  ),
+                ],
               ),
-              _statTile(
-                'Completadas',
-                '$porcentaje%',
-                Icons.check_circle_rounded,
-                KanbanColors.ok,
+              const SizedBox(height: 20),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final apilar = constraints.maxWidth < 720;
+                  final donut = _tarjeta(
+                    'Tareas por estatus',
+                    _graficaEstatus(tareas, columnas),
+                  );
+                  final barras = _tarjeta(
+                    'Tareas por prioridad',
+                    _graficaPrioridad(tareas),
+                  );
+                  if (apilar) {
+                    return Column(
+                      children: [donut, const SizedBox(height: 16), barras],
+                    );
+                  }
+                  return IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(child: donut),
+                        const SizedBox(width: 16),
+                        Expanded(child: barras),
+                      ],
+                    ),
+                  );
+                },
               ),
-              _statTile(
-                'En proceso',
-                '$enProceso',
-                Icons.autorenew_rounded,
-                const Color(0xFF2196F3),
+              const SizedBox(height: 16),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final apilar = constraints.maxWidth < 720;
+                  final carga = _tarjeta(
+                    'Carga por integrante',
+                    _graficaCargaMiembros(tareas, miembros),
+                  );
+                  final cumplimiento = _tarjeta(
+                    'Cumplimiento de fechas (planeado vs. real)',
+                    _graficaCumplimiento(tareas),
+                  );
+                  if (apilar) {
+                    return Column(
+                      children: [
+                        carga,
+                        const SizedBox(height: 16),
+                        cumplimiento,
+                      ],
+                    );
+                  }
+                  return IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(child: carga),
+                        const SizedBox(width: 16),
+                        Expanded(child: cumplimiento),
+                      ],
+                    ),
+                  );
+                },
               ),
-              _statTile(
-                'Vencidas',
-                '$vencidas',
-                Icons.warning_rounded,
-                KanbanColors.danger,
+              const SizedBox(height: 16),
+              _tarjeta(
+                'Subtareas delegadas por responsable',
+                _graficaSubtareasDelegadas(tareas, miembros),
+              ),
+              const SizedBox(height: 16),
+              _tarjeta(
+                'Tendencia: creadas vs. completadas (últimas 8 semanas)',
+                _graficaTendencia(widget.tareas),
               ),
             ],
           ),
-          const SizedBox(height: 20),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final apilar = constraints.maxWidth < 720;
-              final donut = _tarjeta('Tareas por estatus', _graficaEstatus());
-              final barras = _tarjeta(
-                'Tareas por prioridad',
-                _graficaPrioridad(),
-              );
-              if (apilar) {
-                return Column(
-                  children: [donut, const SizedBox(height: 16), barras],
-                );
-              }
-              return IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(child: donut),
-                    const SizedBox(width: 16),
-                    Expanded(child: barras),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _statTile(String label, String valor, IconData icon, Color color) {
+  Widget _statTile(
+    String label,
+    double valor,
+    IconData icon,
+    Color color, {
+    String sufijo = '',
+  }) {
     return Container(
       width: 200,
       padding: const EdgeInsets.all(16),
@@ -132,12 +303,17 @@ class KanbanGraficasView extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  valor,
-                  style: TextStyle(
-                    fontSize: 19,
-                    fontWeight: FontWeight.w600,
-                    color: KanbanColors.texto,
+                TweenAnimationBuilder<double>(
+                  tween: Tween(begin: 0, end: valor),
+                  duration: _kAnimDuracion,
+                  curve: _kAnimCurva,
+                  builder: (context, animado, _) => Text(
+                    '${animado.round()}$sufijo',
+                    style: TextStyle(
+                      fontSize: 19,
+                      fontWeight: FontWeight.w600,
+                      color: KanbanColors.texto,
+                    ),
                   ),
                 ),
                 Text(
@@ -174,7 +350,7 @@ class KanbanGraficasView extends StatelessWidget {
     );
   }
 
-  Widget _graficaEstatus() {
+  Widget _graficaEstatus(List<Tarea> tareas, List<KanbanColumna> columnas) {
     if (tareas.isEmpty) return _sinDatos();
     final conteos = {
       for (final col in columnas)
@@ -188,6 +364,8 @@ class KanbanGraficasView extends StatelessWidget {
           width: 150,
           height: 150,
           child: PieChart(
+            duration: _kAnimDuracion,
+            curve: _kAnimCurva,
             PieChartData(
               sectionsSpace: 2,
               centerSpaceRadius: 40,
@@ -256,7 +434,7 @@ class KanbanGraficasView extends StatelessWidget {
     );
   }
 
-  Widget _graficaPrioridad() {
+  Widget _graficaPrioridad(List<Tarea> tareas) {
     if (tareas.isEmpty) return _sinDatos();
     final conteos = {
       for (final p in TareaPrioridad.values)
@@ -269,6 +447,8 @@ class KanbanGraficasView extends StatelessWidget {
     return SizedBox(
       height: 180,
       child: BarChart(
+        duration: _kAnimDuracion,
+        curve: _kAnimCurva,
         BarChartData(
           maxY: maxY == 0 ? 1 : maxY + 1,
           gridData: const FlGridData(show: false),
@@ -320,6 +500,515 @@ class KanbanGraficasView extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  /// Cuántas tareas (no archivadas, visibles) tiene asignadas cada
+  /// integrante — barras horizontales, una por persona, en el mismo color
+  /// que su avatar en el resto del módulo (identidad consistente en toda
+  /// la app en vez de una paleta categórica nueva).
+  Widget _graficaCargaMiembros(List<Tarea> tareas, List<Miembro> miembros) {
+    if (miembros.isEmpty || tareas.isEmpty) return _sinDatos();
+    final conteos = {
+      for (final m in miembros)
+        m: tareas.where((t) => t.miembroIds.contains(m.id)).length,
+    }..removeWhere((_, cantidad) => cantidad == 0);
+    if (conteos.isEmpty) return _sinDatos();
+
+    final entradas = conteos.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final maxCantidad = entradas.first.value.toDouble();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final e in entradas)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 11,
+                  backgroundColor: e.key.colorAvatar,
+                  child: Text(
+                    e.key.nombre.isNotEmpty
+                        ? e.key.nombre[0].toUpperCase()
+                        : '?',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 88,
+                  child: Text(
+                    e.key.nombre,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: KanbanColors.texto),
+                  ),
+                ),
+                Expanded(
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: e.value / maxCantidad),
+                    duration: _kAnimDuracion,
+                    curve: _kAnimCurva,
+                    builder: (context, fraccion, _) => ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: fraccion,
+                        minHeight: 8,
+                        backgroundColor: KanbanColors.bg3,
+                        valueColor: AlwaysStoppedAnimation(e.key.colorAvatar),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 18,
+                  child: Text(
+                    '${e.value}',
+                    textAlign: TextAlign.end,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: KanbanColors.texto,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Diferencia entre fecha de vencimiento planeada y `fechaFinReal` para
+  /// las tareas ya cerradas (terminadas/revisadas) que tienen ambos datos
+  /// — un vistazo directo de qué tan bien se cumplen las fechas planeadas
+  /// en el Gantt. Verde = a tiempo o antes, rojo = retraso.
+  Widget _graficaCumplimiento(List<Tarea> tareas) {
+    final cerradas =
+        tareas
+            .where(
+              (t) =>
+                  t.fechaVencimiento != null &&
+                  t.fechaFinReal != null &&
+                  // Solo tareas *actualmente* cerradas: si se reabrió, su
+                  // `fechaFinReal` (nunca se limpia, para conservar
+                  // historial) quedaría comparándose contra una fecha de
+                  // vencimiento ya editada y daría un retraso sin sentido.
+                  (t.estatus == TareaEstatus.terminado ||
+                      t.estatus == TareaEstatus.revisado),
+            )
+            .map(
+              (t) => (
+                tarea: t,
+                retrasoDias: t.fechaFinReal!
+                    .difference(t.fechaVencimiento!)
+                    .inDays,
+              ),
+            )
+            .toList()
+          ..sort((a, b) => b.retrasoDias.compareTo(a.retrasoDias));
+
+    if (cerradas.isEmpty) return _sinDatos();
+
+    final top = cerradas.take(6).toList();
+    final maxAbs = top
+        .map((e) => e.retrasoDias.abs())
+        .fold<int>(1, (a, b) => a > b ? a : b)
+        .toDouble();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final e in top)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 96,
+                  child: Text(
+                    e.tarea.titulo,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: KanbanColors.texto),
+                  ),
+                ),
+                Expanded(
+                  child: _barraDivergente(
+                    fraccion: e.retrasoDias / maxAbs,
+                    color: e.retrasoDias > 0
+                        ? KanbanColors.danger
+                        : KanbanColors.ok,
+                  ),
+                ),
+                SizedBox(
+                  width: 56,
+                  child: Text(
+                    e.retrasoDias == 0
+                        ? 'A tiempo'
+                        : e.retrasoDias > 0
+                        ? '+${e.retrasoDias}d'
+                        : '${e.retrasoDias}d',
+                    textAlign: TextAlign.end,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: e.retrasoDias > 0
+                          ? KanbanColors.danger
+                          : KanbanColors.ok,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Recorre el árbol de subtareas de todas las [tareas] y cuenta, por cada
+  /// responsable (persona o departamento), cuántas siguen pendientes y
+  /// cuántas ya se resolvieron — el vistazo directo de "quién trae carga
+  /// delegada encima" que resulta de la nueva función de subtareas.
+  Widget _graficaSubtareasDelegadas(
+    List<Tarea> tareas,
+    List<Miembro> miembros,
+  ) {
+    final pendientes = <String, int>{};
+    final resueltas = <String, int>{};
+    final colores = <String, Color>{};
+    final nombres = <String, String>{};
+
+    Miembro? buscarMiembro(int id) {
+      for (final m in miembros) {
+        if (m.id == id) return m;
+      }
+      return null;
+    }
+
+    void recorrer(List<Actividad> lista) {
+      for (final a in lista) {
+        String? clave;
+        if (a.miembroId != null) {
+          final m = buscarMiembro(a.miembroId!);
+          clave = 'm:${a.miembroId}';
+          nombres[clave] = m?.nombre ?? 'Persona #${a.miembroId}';
+          colores[clave] = m?.colorAvatar ?? KanbanColors.tdim;
+        } else if (a.departamento != null) {
+          clave = 'd:${a.departamento}';
+          nombres[clave] = a.departamento!;
+          colores[clave] = KanbanColors.accent;
+        }
+        if (clave != null) {
+          if (a.terminada) {
+            resueltas[clave] = (resueltas[clave] ?? 0) + 1;
+          } else {
+            pendientes[clave] = (pendientes[clave] ?? 0) + 1;
+          }
+        }
+        recorrer(a.subActividades);
+      }
+    }
+
+    for (final t in tareas) {
+      recorrer(t.actividades);
+    }
+
+    final claves = {...pendientes.keys, ...resueltas.keys}.toList()
+      ..sort((a, b) => (pendientes[b] ?? 0).compareTo(pendientes[a] ?? 0));
+    if (claves.isEmpty) {
+      return SizedBox(
+        height: 100,
+        child: Center(
+          child: Text(
+            'Aún no hay subtareas delegadas a una persona o departamento.',
+            style: TextStyle(fontSize: 12.5, color: KanbanColors.tdim),
+          ),
+        ),
+      );
+    }
+
+    final maxCantidad = claves
+        .map((k) => (pendientes[k] ?? 0) + (resueltas[k] ?? 0))
+        .fold<int>(1, (a, b) => a > b ? a : b)
+        .toDouble();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final k in claves)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Row(
+              children: [
+                Container(
+                  width: 9,
+                  height: 9,
+                  decoration: BoxDecoration(
+                    color: colores[k],
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 96,
+                  child: Text(
+                    nombres[k]!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: KanbanColors.texto),
+                  ),
+                ),
+                Expanded(
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(
+                      begin: 0,
+                      end: (pendientes[k] ?? 0) / maxCantidad,
+                    ),
+                    duration: _kAnimDuracion,
+                    curve: _kAnimCurva,
+                    builder: (context, fraccion, _) => ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: fraccion,
+                        minHeight: 8,
+                        backgroundColor: KanbanColors.bg3,
+                        valueColor: AlwaysStoppedAnimation(
+                          (pendientes[k] ?? 0) > 0
+                              ? KanbanColors.danger
+                              : KanbanColors.ok,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 76,
+                  child: Text(
+                    '${pendientes[k] ?? 0} pend. · ${resueltas[k] ?? 0} ok',
+                    textAlign: TextAlign.end,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w600,
+                      color: (pendientes[k] ?? 0) > 0
+                          ? KanbanColors.danger
+                          : KanbanColors.ok,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Barra que crece desde el centro (cero) hacia la derecha (retraso) o
+  /// hacia la izquierda (adelanto); `fraccion` va de -1 a 1.
+  Widget _barraDivergente({required double fraccion, required Color color}) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: fraccion.clamp(-1.0, 1.0)),
+      duration: _kAnimDuracion,
+      curve: _kAnimCurva,
+      builder: (context, animado, _) {
+        return SizedBox(
+          height: 10,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final centro = constraints.maxWidth / 2;
+              final anchoBarra = (animado.abs() * centro).clamp(0.0, centro);
+              return Stack(
+                alignment: Alignment.center,
+                children: [
+                  Container(
+                    height: 2,
+                    width: constraints.maxWidth,
+                    color: KanbanColors.borde,
+                  ),
+                  Positioned(
+                    left: animado >= 0 ? centro : centro - anchoBarra,
+                    width: anchoBarra,
+                    child: Container(
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  /// Cuántas tareas se crearon (`fechaInicio`) y cuántas se completaron
+  /// (`fechaFinReal`) por semana en las últimas 8 semanas — siempre sobre
+  /// el total de tareas del tablero (ignora el filtro de rango propio de
+  /// esta vista, que es sobre otra ventana de tiempo arbitraria y mezclarlo
+  /// con "últimas 8 semanas" confundiría más de lo que ayuda).
+  Widget _graficaTendencia(List<Tarea> tareas) {
+    const semanas = 8;
+    final hoy = DateTime.now();
+    final lunesActual = DateTime(
+      hoy.year,
+      hoy.month,
+      hoy.day,
+    ).subtract(Duration(days: hoy.weekday - 1));
+    final inicios = [
+      for (var i = semanas - 1; i >= 0; i--)
+        lunesActual.subtract(Duration(days: i * 7)),
+    ];
+
+    int bucketDe(DateTime fecha) {
+      final f = DateTime(fecha.year, fecha.month, fecha.day);
+      for (var i = inicios.length - 1; i >= 0; i--) {
+        if (!f.isBefore(inicios[i])) return i;
+      }
+      return -1;
+    }
+
+    final creadas = List<int>.filled(semanas, 0);
+    final completadas = List<int>.filled(semanas, 0);
+    for (final t in tareas) {
+      if (t.fechaInicio != null) {
+        final b = bucketDe(t.fechaInicio!);
+        if (b >= 0 && b < semanas) creadas[b]++;
+      }
+      if (t.fechaFinReal != null) {
+        final b = bucketDe(t.fechaFinReal!);
+        if (b >= 0 && b < semanas) completadas[b]++;
+      }
+    }
+
+    final maxY = [
+      ...creadas,
+      ...completadas,
+    ].fold<int>(0, (a, b) => a > b ? a : b).toDouble();
+    if (maxY == 0) return _sinDatos();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            _leyendaDot(KanbanColors.accent, 'Creadas'),
+            const SizedBox(width: 16),
+            _leyendaDot(KanbanColors.ok, 'Completadas'),
+          ],
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 180,
+          child: LineChart(
+            duration: _kAnimDuracion,
+            curve: _kAnimCurva,
+            LineChartData(
+              minY: 0,
+              maxY: maxY + 1,
+              gridData: FlGridData(
+                show: true,
+                drawVerticalLine: false,
+                getDrawingHorizontalLine: (v) =>
+                    FlLine(color: KanbanColors.borde, strokeWidth: 1),
+              ),
+              borderData: FlBorderData(show: false),
+              titlesData: FlTitlesData(
+                topTitles: const AxisTitles(
+                  sideTitles: SideTitles(showTitles: false),
+                ),
+                rightTitles: const AxisTitles(
+                  sideTitles: SideTitles(showTitles: false),
+                ),
+                leftTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    reservedSize: 26,
+                    getTitlesWidget: (v, meta) => Text(
+                      '${v.toInt()}',
+                      style: TextStyle(fontSize: 10, color: KanbanColors.tdim),
+                    ),
+                  ),
+                ),
+                bottomTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    reservedSize: 26,
+                    getTitlesWidget: (v, meta) {
+                      final i = v.toInt();
+                      if (i < 0 || i >= inicios.length) {
+                        return const SizedBox.shrink();
+                      }
+                      final d = inicios[i];
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          '${d.day}/${d.month}',
+                          style: TextStyle(
+                            fontSize: 9.5,
+                            color: KanbanColors.tdim,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+              lineBarsData: [
+                LineChartBarData(
+                  spots: [
+                    for (var i = 0; i < semanas; i++)
+                      FlSpot(i.toDouble(), creadas[i].toDouble()),
+                  ],
+                  isCurved: true,
+                  color: KanbanColors.accent,
+                  barWidth: 2.5,
+                  dotData: const FlDotData(show: true),
+                  belowBarData: BarAreaData(show: false),
+                ),
+                LineChartBarData(
+                  spots: [
+                    for (var i = 0; i < semanas; i++)
+                      FlSpot(i.toDouble(), completadas[i].toDouble()),
+                  ],
+                  isCurved: true,
+                  color: KanbanColors.ok,
+                  barWidth: 2.5,
+                  dotData: const FlDotData(show: true),
+                  belowBarData: BarAreaData(show: false),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _leyendaDot(Color color, String texto) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 6),
+        Text(texto, style: TextStyle(fontSize: 11.5, color: KanbanColors.tdim)),
+      ],
     );
   }
 

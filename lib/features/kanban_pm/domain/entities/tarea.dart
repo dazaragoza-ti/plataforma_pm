@@ -48,6 +48,18 @@ class Tarea {
   /// Tarjeta archivada: se oculta del tablero/Gantt/gráficas sin borrarla.
   final bool archivada;
 
+  /// `true` cuando el repositorio pausó esta tarea automáticamente porque
+  /// alguna subtarea de [actividades] (a cualquier profundidad) tiene un
+  /// responsable asignado y sigue sin resolverse. Sirve para distinguir
+  /// una pausa automática de una pausa manual: solo la primera se revierte
+  /// sola cuando el bloqueo se resuelve.
+  final bool pausadaPorSubtarea;
+
+  /// Estatus que tenía la tarea justo antes de la auto-pausa, para poder
+  /// restaurarlo cuando la subtarea que la bloqueaba se completa. `null`
+  /// si nunca ha sido auto-pausada.
+  final TareaEstatus? estatusAntesDePausa;
+
   const Tarea({
     required this.id,
     required this.titulo,
@@ -71,12 +83,22 @@ class Tarea {
     this.portada,
     this.dependeDeIds = const [],
     this.archivada = false,
+    this.pausadaPorSubtarea = false,
+    this.estatusAntesDePausa,
   });
 
-  int get actividadesTerminadas => actividades.where((a) => a.terminada).length;
+  int get actividadesTerminadas =>
+      _contarActividades(actividades, (a) => a.terminada);
+
+  int get actividadesTotales => _contarActividades(actividades, (_) => true);
 
   double get progreso =>
-      actividades.isEmpty ? 0 : actividadesTerminadas / actividades.length;
+      actividadesTotales == 0 ? 0 : actividadesTerminadas / actividadesTotales;
+
+  /// `true` si alguna subtarea (a cualquier profundidad) tiene un
+  /// responsable asignado y todavía no se marca terminada — la condición
+  /// que mantiene la tarea auto-pausada.
+  bool get tieneSubtareaBloqueante => _tieneAsignadaPendiente(actividades);
 
   bool get vencida =>
       fechaVencimiento != null &&
@@ -107,6 +129,9 @@ class Tarea {
     bool limpiarPortada = false,
     List<int>? dependeDeIds,
     bool? archivada,
+    bool? pausadaPorSubtarea,
+    TareaEstatus? estatusAntesDePausa,
+    bool limpiarEstatusAntesDePausa = false,
   }) {
     return Tarea(
       id: id ?? this.id,
@@ -131,6 +156,27 @@ class Tarea {
       portada: limpiarPortada ? null : (portada ?? this.portada),
       dependeDeIds: dependeDeIds ?? this.dependeDeIds,
       archivada: archivada ?? this.archivada,
+      pausadaPorSubtarea: pausadaPorSubtarea ?? this.pausadaPorSubtarea,
+      estatusAntesDePausa: limpiarEstatusAntesDePausa
+          ? null
+          : (estatusAntesDePausa ?? this.estatusAntesDePausa),
     );
   }
+}
+
+int _contarActividades(List<Actividad> lista, bool Function(Actividad) cond) {
+  var total = 0;
+  for (final a in lista) {
+    if (cond(a)) total++;
+    total += _contarActividades(a.subActividades, cond);
+  }
+  return total;
+}
+
+bool _tieneAsignadaPendiente(List<Actividad> lista) {
+  for (final a in lista) {
+    if (a.tieneResponsable && !a.terminada) return true;
+    if (_tieneAsignadaPendiente(a.subActividades)) return true;
+  }
+  return false;
 }
