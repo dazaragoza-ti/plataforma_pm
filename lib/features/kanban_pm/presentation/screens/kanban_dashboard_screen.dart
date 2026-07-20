@@ -1222,31 +1222,43 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
           Expanded(
             child: _cargando
                 ? const Center(child: CircularProgressIndicator())
-                : switch (_vista) {
-                    _Vista.lista => KanbanListaView(
-                      tareas: _tareas,
-                      columnas: _columnasVisibles,
-                      miembrosPorId: _miembrosPorId,
-                      etiquetasPorId: _etiquetasPorId,
-                      onAbrirTarea: _abrirDetalle,
-                      onMoverSeleccion: _moverTareasEnLote,
-                      onArchivarSeleccion: _archivarTareasEnLote,
-                      onEliminarSeleccion: _eliminarTareasEnLote,
+                // `AnimatedSwitcher` en vez de un `switch` desnudo: sin él,
+                // cambiar de vista desmontaba y montaba el widget completo
+                // en el mismo frame (corte seco); con él, la vista saliente
+                // se desvanece mientras entra la nueva.
+                : AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    switchInCurve: Curves.easeOut,
+                    switchOutCurve: Curves.easeIn,
+                    child: KeyedSubtree(
+                      key: ValueKey(_vista),
+                      child: switch (_vista) {
+                        _Vista.lista => KanbanListaView(
+                          tareas: _tareas,
+                          columnas: _columnasVisibles,
+                          miembrosPorId: _miembrosPorId,
+                          etiquetasPorId: _etiquetasPorId,
+                          onAbrirTarea: _abrirDetalle,
+                          onMoverSeleccion: _moverTareasEnLote,
+                          onArchivarSeleccion: _archivarTareasEnLote,
+                          onEliminarSeleccion: _eliminarTareasEnLote,
+                        ),
+                        _Vista.graficas => KanbanGraficasView(
+                          tareas: _tareas,
+                          columnas: _columnasVisibles,
+                          miembros: _miembros,
+                        ),
+                        _Vista.gantt => KanbanGanttView(
+                          tareas: _tareas,
+                          columnas: _columnasVisibles,
+                          repository: _repo,
+                          onRefresh: _cargar,
+                          onAbrirTarea: _abrirDetalle,
+                        ),
+                        _Vista.kanban => _tablero(context),
+                      },
                     ),
-                    _Vista.graficas => KanbanGraficasView(
-                      tareas: _tareas,
-                      columnas: _columnasVisibles,
-                      miembros: _miembros,
-                    ),
-                    _Vista.gantt => KanbanGanttView(
-                      tareas: _tareas,
-                      columnas: _columnasVisibles,
-                      repository: _repo,
-                      onRefresh: _cargar,
-                      onAbrirTarea: _abrirDetalle,
-                    ),
-                    _Vista.kanban => _tablero(context),
-                  },
+                  ),
           ),
         ],
       ),

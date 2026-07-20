@@ -25,8 +25,10 @@ const _kAnimCurva = Curves.easeOutCubic;
 /// real) y subtareas delegadas, calculados sobre la lista de tareas visible
 /// en el tablero (respeta los filtros activos). Los valores se animan al
 /// cambiar para que un refresco se sienta como una actualización, no un
-/// parpadeo, y toda la vista entra con un fundido suave la primera vez que
-/// se monta (p. ej. al cambiar a esta pestaña).
+/// parpadeo. La entrada de la vista (al cambiar a esta pestaña) la anima el
+/// `AnimatedSwitcher` del dashboard — esta vista no lleva su propia
+/// animación de entrada para no apilar dos transiciones sobre un árbol
+/// pesado justo en el frame del click, que se sentía como un tirón.
 class KanbanGraficasView extends StatefulWidget {
   final List<Tarea> tareas;
   final List<KanbanColumna> columnas;
@@ -43,32 +45,12 @@ class KanbanGraficasView extends StatefulWidget {
   State<KanbanGraficasView> createState() => _KanbanGraficasViewState();
 }
 
-class _KanbanGraficasViewState extends State<KanbanGraficasView>
-    with SingleTickerProviderStateMixin {
-  late final _entrada = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 500),
-  )..forward();
-  late final _fundido = CurvedAnimation(
-    parent: _entrada,
-    curve: Curves.easeOut,
-  );
-  late final _deslizamiento = Tween(
-    begin: const Offset(0, 0.04),
-    end: Offset.zero,
-  ).animate(CurvedAnimation(parent: _entrada, curve: Curves.easeOutCubic));
-
+class _KanbanGraficasViewState extends State<KanbanGraficasView> {
   /// Rango de fechas propio de esta vista (independiente de los filtros
   /// del tablero): si está activo, todas las gráficas y KPIs de abajo
   /// (menos la tendencia semanal, que siempre mira las últimas 8 semanas)
   /// solo consideran tareas cuya `fechaInicio` cae dentro del rango.
   DateTimeRange? _rango;
-
-  @override
-  void dispose() {
-    _entrada.dispose();
-    super.dispose();
-  }
 
   Future<void> _elegirRango() async {
     final ahora = DateTime.now();
@@ -186,129 +168,119 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView>
     final bloqueadas = tareas.where((t) => t.pausadaPorSubtarea).length;
     final porcentaje = total == 0 ? 0.0 : (completadas / total * 100);
 
-    return FadeTransition(
-      opacity: _fundido,
-      child: SlideTransition(
-        position: _deslizamiento,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _filtroRango(),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
             children: [
-              _filtroRango(),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  _statTile(
-                    'Total de tareas',
-                    total.toDouble(),
-                    Icons.view_kanban_rounded,
-                    KanbanColors.accent,
-                  ),
-                  _statTile(
-                    'Completadas',
-                    porcentaje,
-                    Icons.check_circle_rounded,
-                    KanbanColors.ok,
-                    sufijo: '%',
-                  ),
-                  _statTile(
-                    'En proceso',
-                    enProceso.toDouble(),
-                    Icons.autorenew_rounded,
-                    const Color(0xFF2196F3),
-                  ),
-                  _statTile(
-                    'Vencidas',
-                    vencidas.toDouble(),
-                    Icons.warning_rounded,
-                    KanbanColors.danger,
-                  ),
-                  _statTile(
-                    'Bloqueadas por subtarea',
-                    bloqueadas.toDouble(),
-                    Icons.pause_circle_outline_rounded,
-                    const Color(0xFFFD7E14),
-                  ),
-                ],
+              _statTile(
+                'Total de tareas',
+                total.toDouble(),
+                Icons.view_kanban_rounded,
+                KanbanColors.accent,
               ),
-              const SizedBox(height: 20),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final apilar = constraints.maxWidth < 720;
-                  final donut = _tarjeta(
-                    'Tareas por estatus',
-                    _graficaEstatus(tareas, columnas),
-                  );
-                  final barras = _tarjeta(
-                    'Tareas por prioridad',
-                    _graficaPrioridad(tareas),
-                  );
-                  if (apilar) {
-                    return Column(
-                      children: [donut, const SizedBox(height: 16), barras],
-                    );
-                  }
-                  return IntrinsicHeight(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(child: donut),
-                        const SizedBox(width: 16),
-                        Expanded(child: barras),
-                      ],
-                    ),
-                  );
-                },
+              _statTile(
+                'Completadas',
+                porcentaje,
+                Icons.check_circle_rounded,
+                KanbanColors.ok,
+                sufijo: '%',
               ),
-              const SizedBox(height: 16),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final apilar = constraints.maxWidth < 720;
-                  final carga = _tarjeta(
-                    'Carga por integrante',
-                    _graficaCargaMiembros(tareas, miembros),
-                  );
-                  final cumplimiento = _tarjeta(
-                    'Cumplimiento de fechas (planeado vs. real)',
-                    _graficaCumplimiento(tareas),
-                  );
-                  if (apilar) {
-                    return Column(
-                      children: [
-                        carga,
-                        const SizedBox(height: 16),
-                        cumplimiento,
-                      ],
-                    );
-                  }
-                  return IntrinsicHeight(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(child: carga),
-                        const SizedBox(width: 16),
-                        Expanded(child: cumplimiento),
-                      ],
-                    ),
-                  );
-                },
+              _statTile(
+                'En proceso',
+                enProceso.toDouble(),
+                Icons.autorenew_rounded,
+                const Color(0xFF2196F3),
               ),
-              const SizedBox(height: 16),
-              _tarjeta(
-                'Subtareas delegadas por responsable',
-                _graficaSubtareasDelegadas(tareas, miembros),
+              _statTile(
+                'Vencidas',
+                vencidas.toDouble(),
+                Icons.warning_rounded,
+                KanbanColors.danger,
               ),
-              const SizedBox(height: 16),
-              _tarjeta(
-                'Tendencia: creadas vs. completadas (últimas 8 semanas)',
-                _graficaTendencia(widget.tareas),
+              _statTile(
+                'Bloqueadas por subtarea',
+                bloqueadas.toDouble(),
+                Icons.pause_circle_outline_rounded,
+                const Color(0xFFFD7E14),
               ),
             ],
           ),
-        ),
+          const SizedBox(height: 20),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final apilar = constraints.maxWidth < 720;
+              final donut = _tarjeta(
+                'Tareas por estatus',
+                _graficaEstatus(tareas, columnas),
+              );
+              final barras = _tarjeta(
+                'Tareas por prioridad',
+                _graficaPrioridad(tareas),
+              );
+              if (apilar) {
+                return Column(
+                  children: [donut, const SizedBox(height: 16), barras],
+                );
+              }
+              return IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: donut),
+                    const SizedBox(width: 16),
+                    Expanded(child: barras),
+                  ],
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final apilar = constraints.maxWidth < 720;
+              final carga = _tarjeta(
+                'Carga por integrante',
+                _graficaCargaMiembros(tareas, miembros),
+              );
+              final cumplimiento = _tarjeta(
+                'Cumplimiento de fechas (planeado vs. real)',
+                _graficaCumplimiento(tareas),
+              );
+              if (apilar) {
+                return Column(
+                  children: [carga, const SizedBox(height: 16), cumplimiento],
+                );
+              }
+              return IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: carga),
+                    const SizedBox(width: 16),
+                    Expanded(child: cumplimiento),
+                  ],
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+          _tarjeta(
+            'Subtareas delegadas por responsable',
+            _graficaSubtareasDelegadas(tareas, miembros),
+          ),
+          const SizedBox(height: 16),
+          _tarjeta(
+            'Tendencia: creadas vs. completadas (últimas 8 semanas)',
+            _graficaTendencia(widget.tareas),
+          ),
+        ],
       ),
     );
   }
