@@ -107,9 +107,16 @@ class Tarea {
   /// que mantiene la tarea auto-pausada.
   bool get tieneSubtareaBloqueante => _tieneAsignadaPendiente(actividades);
 
+  /// `true` si la tarea ya salió del flujo activo (terminada o revisada).
+  /// Único punto de verdad para "¿esta tarea ya está cerrada?" — antes cada
+  /// vista repetía su propia comparación y algunas se olvidaban de incluir
+  /// `revisado`, dejando tareas ya revisadas marcarse como vencidas o
+  /// colarse en filtros de "solo pendientes".
+  bool get cerrada => estatus.esCerrado;
+
   bool get vencida =>
       fechaVencimiento != null &&
-      estatus != TareaEstatus.terminado &&
+      !cerrada &&
       fechaVencimiento!.isBefore(DateTime.now());
 
   Tarea copyWith({

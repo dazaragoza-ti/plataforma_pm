@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../data/kanban_repository.dart';
 import '../../../domain/entities/tarea.dart';
 import '../../../kanban_constants.dart';
+import '../kanban_column.dart' show direccionAutoscroll;
 import 'gantt_bar.dart';
 import 'gantt_connectors_painter.dart';
 import 'gantt_critical_path.dart';
@@ -33,6 +36,13 @@ class KanbanGanttView extends StatefulWidget {
   final Future<void> Function() onRefresh;
   final void Function(Tarea tarea) onAbrirTarea;
 
+  /// Zoom con el que se monta esta vista y callback para recordarlo en el
+  /// padre — sin esto, como cada cambio de pestaña desmonta y vuelve a
+  /// montar el Gantt desde cero, siempre se resetaba a "Día" aunque el
+  /// usuario hubiera elegido "Semana" o "Mes" antes de salir.
+  final GanttZoom zoomInicial;
+  final ValueChanged<GanttZoom>? onZoomCambiado;
+
   const KanbanGanttView({
     super.key,
     required this.tareas,
@@ -40,6 +50,8 @@ class KanbanGanttView extends StatefulWidget {
     required this.repository,
     required this.onRefresh,
     required this.onAbrirTarea,
+    this.zoomInicial = GanttZoom.dia,
+    this.onZoomCambiado,
   });
 
   @override
@@ -51,15 +63,32 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
   final _hCtrlBody = ScrollController(); // bloque "Planeado"
   final _hCtrlBodyReal = ScrollController(); // bloque "Real"
   final _lienzoPlaneadoKey = GlobalKey();
+  final _viewportPlaneadoKey = GlobalKey();
   bool _sincronizandoScroll = false;
   bool _yaCentrado = false;
-  GanttZoom _zoom = GanttZoom.dia;
+  late GanttZoom _zoom = widget.zoomInicial;
+
+  /// Autoscroll horizontal al arrastrar una barra cerca del borde del
+  /// viewport visible — mismo mecanismo que ya existe para arrastrar
+  /// tarjetas en el tablero Kanban ([direccionAutoscroll]). Sin esto, no
+  /// había forma de arrastrar una tarea a una fecha que quedara fuera de
+  /// la parte visible del cronograma: el viewport nunca se movía solo.
+  Timer? _autoscrollTimer;
+  double? _autoscrollDireccion;
 
   /// Id de la tarea desde la que se está arrastrando un conector de
   /// dependencia (`null` si no hay ninguno en curso) y el punto actual del
   /// arrastre, en coordenadas locales del lienzo del bloque "Planeado".
   int? _origenConector;
   Offset? _puntoConector;
+
+  /// Validez del destino actualmente sobrevolado mientras se arrastra un
+  /// conector: `null` = no hay ninguna barra bajo el punto, `true`/`false`
+  /// = la barra bajo el punto sí/no aceptaría la dependencia. Alimenta el
+  /// color de la línea temporal para avisar en vivo, en vez de que el
+  /// usuario solo se entere del error (ciclo, auto-referencia, ya existe)
+  /// después de soltar.
+  bool? _destinoConectorValido;
 
   @override
   void initState() {
@@ -72,10 +101,41 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
 
   @override
   void dispose() {
+    _autoscrollTimer?.cancel();
     _hCtrlHeader.dispose();
     _hCtrlBody.dispose();
     _hCtrlBodyReal.dispose();
     super.dispose();
+  }
+
+  void _manejarAutoscrollGantt(Offset globalPos) {
+    final box =
+        _viewportPlaneadoKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final area = box.localToGlobal(Offset.zero) & box.size;
+    final direccion = direccionAutoscroll(
+      posEnEje: globalPos.dx,
+      inicioArea: area.left,
+      finArea: area.right,
+    );
+    if (direccion == _autoscrollDireccion) return;
+    _autoscrollDireccion = direccion;
+    _autoscrollTimer?.cancel();
+    if (direccion == null) return;
+    _autoscrollTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
+      if (!_hCtrlBody.hasClients) return;
+      final destino = (_hCtrlBody.offset + direccion * 14).clamp(
+        0.0,
+        _hCtrlBody.position.maxScrollExtent,
+      );
+      _hCtrlBody.jumpTo(destino);
+    });
+  }
+
+  void _detenerAutoscrollGantt() {
+    _autoscrollTimer?.cancel();
+    _autoscrollTimer = null;
+    _autoscrollDireccion = null;
   }
 
   /// Mantiene alineados el encabezado de días y los dos bloques del Gantt
@@ -124,10 +184,28 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
     DateTime inicio,
     DateTime fin,
   ) async {
-    await widget.repository.actualizarTarea(
+    final movidas = await widget.repository.actualizarTarea(
       tarea.copyWith(fechaInicio: inicio, fechaVencimiento: fin),
     );
     await widget.onRefresh();
+    _avisarCascada(movidas);
+  }
+
+  /// Avisa en el momento cuando mover una tarjeta empujó a otras en
+  /// cascada — sin esto, las tareas sucesoras se mueven en silencio y solo
+  /// se nota después, abriendo cada una para ver su historial.
+  void _avisarCascada(int movidas) {
+    if (movidas == 0 || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          movidas == 1
+              ? 'Se recorrió 1 tarjeta sucesora para respetar la dependencia'
+              : 'Se recorrieron $movidas tarjetas sucesoras para respetar '
+                    'la dependencia',
+        ),
+      ),
+    );
   }
 
   /// Convierte una posición global (de puntero) a coordenadas locales del
@@ -145,11 +223,50 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
     setState(() {
       _origenConector = origenId;
       _puntoConector = _aLocal(global);
+      _destinoConectorValido = null;
     });
   }
 
+  /// Id de la barra bajo [punto] (con el mismo margen de tolerancia de
+  /// siempre), o `null` si no hay ninguna ahí.
+  int? _idDestinoBajoPunto(GanttLayout layout, Offset punto) {
+    for (final entrada in layout.barras.entries) {
+      if (entrada.value.inflate(4).contains(punto)) return entrada.key;
+    }
+    return null;
+  }
+
+  /// `true` si soltar el conector de [origenId] sobre [destinoId] crearía
+  /// una dependencia válida — usado solo para el color de la línea
+  /// temporal; [_confirmarConector] repite estos mismos criterios paso a
+  /// paso porque, a diferencia de aquí, necesita distinguir el caso de
+  /// ciclo (que sí avisa con un mensaje específico) del resto (que
+  /// simplemente no hacen nada al soltar).
+  bool _esDestinoValido(int origenId, int destinoId) {
+    if (destinoId == origenId) return false;
+    final idx = widget.tareas.indexWhere((t) => t.id == destinoId);
+    if (idx == -1) return false;
+    if (widget.tareas[idx].dependeDeIds.contains(origenId)) return false;
+    return !creariaCicloDependencia(
+      widget.tareas,
+      dependienteId: destinoId,
+      predecesoraId: origenId,
+    );
+  }
+
   void _actualizarConector(Offset global) {
-    setState(() => _puntoConector = _aLocal(global));
+    final punto = _aLocal(global);
+    final layout = _ultimoLayout;
+    final origenId = _origenConector;
+    final destinoId = (layout == null || origenId == null)
+        ? null
+        : _idDestinoBajoPunto(layout, punto);
+    setState(() {
+      _puntoConector = punto;
+      _destinoConectorValido = destinoId == null
+          ? null
+          : _esDestinoValido(origenId!, destinoId);
+    });
   }
 
   Future<void> _confirmarConector(GanttLayout layout) async {
@@ -158,16 +275,11 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
     setState(() {
       _origenConector = null;
       _puntoConector = null;
+      _destinoConectorValido = null;
     });
     if (origenId == null || punto == null) return;
 
-    int? destinoId;
-    for (final entrada in layout.barras.entries) {
-      if (entrada.value.inflate(4).contains(punto)) {
-        destinoId = entrada.key;
-        break;
-      }
-    }
+    final destinoId = _idDestinoBajoPunto(layout, punto);
     if (destinoId == null || destinoId == origenId) return;
 
     final idx = widget.tareas.indexWhere((t) => t.id == destinoId);
@@ -193,10 +305,47 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
       return;
     }
 
-    await widget.repository.actualizarTarea(
+    final movidas = await widget.repository.actualizarTarea(
       destino.copyWith(dependeDeIds: [...destino.dependeDeIds, origenId]),
     );
     await widget.onRefresh();
+    _avisarCascada(movidas);
+  }
+
+  /// Toca cerca de la flecha de un conector para borrar esa dependencia —
+  /// simétrico a crearla arrastrando desde [_asaConector]. Con "Deshacer"
+  /// porque es una acción de un solo tap, fácil de disparar sin querer.
+  Future<void> _tocarConector(GanttLayout layout, Offset punto) async {
+    final conectores = calcularConectores(
+      layout.filas.map((f) => f.tarea).toList(),
+      layout.barras,
+    );
+    final c = conectorBajoPunto(conectores, punto);
+    if (c == null) return;
+    final idx = widget.tareas.indexWhere((t) => t.id == c.destinoId);
+    if (idx == -1) return;
+    final destino = widget.tareas[idx];
+    await widget.repository.actualizarTarea(
+      destino.copyWith(
+        dependeDeIds: destino.dependeDeIds
+            .where((id) => id != c.origenId)
+            .toList(),
+      ),
+    );
+    await widget.onRefresh();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Dependencia eliminada'),
+        action: SnackBarAction(
+          label: 'Deshacer',
+          onPressed: () async {
+            await widget.repository.actualizarTarea(destino);
+            await widget.onRefresh();
+          },
+        ),
+      ),
+    );
   }
 
   /// Asa circular en el borde derecho de la barra planeada de [fila]: al
@@ -639,6 +788,7 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
             onSelectionChanged: (s) => setState(() {
               _zoom = s.first;
               _yaCentrado = false;
+              widget.onZoomCambiado?.call(_zoom);
             }),
             style: KanbanColors.segmentedButtonStyle(),
           ),
@@ -724,59 +874,118 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
                         ),
                         _bloqueGantt(
                           filas: layout.filas,
-                          timeline: SingleChildScrollView(
+                          // `Scrollbar` visible: sin ella, nada indicaba que
+                          // el cronograma se puede desplazar horizontalmente
+                          // más allá de lo que cabe en pantalla.
+                          timeline: Scrollbar(
                             controller: _hCtrlBody,
-                            scrollDirection: Axis.horizontal,
-                            child: SizedBox(
-                              width: anchoTotal,
-                              height: altoTotal,
-                              child: Stack(
-                                key: _lienzoPlaneadoKey,
-                                clipBehavior: Clip.none,
-                                children: [
-                                  ..._fondoFilas(layout.filas.length),
-                                  CustomPaint(
-                                    size: Size(anchoTotal, altoTotal),
-                                    painter: GanttConnectorsPainter(
-                                      tareas: layout.filas
-                                          .map((f) => f.tarea)
-                                          .toList(),
-                                      barras: layout.barras,
-                                    ),
-                                  ),
-                                  for (final fila in layout.filas)
-                                    GanttBar(
-                                      tarea: fila.tarea,
-                                      rect: layout.barras[fila.tarea.id]!,
-                                      color: fila.columna.color,
-                                      dayWidth: _zoom.dayWidth,
-                                      esCritica: rutaCritica.contains(
-                                        fila.tarea.id,
+                            thumbVisibility: true,
+                            child: SingleChildScrollView(
+                              key: _viewportPlaneadoKey,
+                              controller: _hCtrlBody,
+                              scrollDirection: Axis.horizontal,
+                              child: SizedBox(
+                                width: anchoTotal,
+                                height: altoTotal,
+                                child: Stack(
+                                  key: _lienzoPlaneadoKey,
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    ..._fondoFilas(layout.filas.length),
+                                    // Toca cerca de una flecha para borrar esa
+                                    // dependencia — antes solo se podían
+                                    // *crear* arrastrando un conector, no
+                                    // quitar sin abrir el detalle de la
+                                    // tarea. `behavior: opaque` para que
+                                    // funcione también sobre el área vacía
+                                    // del lienzo, no solo donde hay trazo.
+                                    GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
+                                      onTapUp: (details) => _tocarConector(
+                                        layout,
+                                        details.localPosition,
                                       ),
-                                      onTap: () =>
-                                          widget.onAbrirTarea(fila.tarea),
-                                      onFechasCambiadas: (ini, fin) =>
-                                          _actualizarFechas(
-                                            fila.tarea,
-                                            ini,
-                                            fin,
-                                          ),
-                                    ),
-                                  for (final fila in layout.filas)
-                                    _asaConector(
-                                      fila,
-                                      layout.barras[fila.tarea.id]!,
-                                    ),
-                                  if (_origenConector != null &&
-                                      _puntoConector != null)
-                                    CustomPaint(
-                                      size: Size(anchoTotal, altoTotal),
-                                      painter: _ConectorTemporalPainter(
-                                        origen: layout.barras[_origenConector]!,
-                                        destino: _puntoConector!,
+                                      child: CustomPaint(
+                                        size: Size(anchoTotal, altoTotal),
+                                        painter: GanttConnectorsPainter(
+                                          tareas: layout.filas
+                                              .map((f) => f.tarea)
+                                              .toList(),
+                                          barras: layout.barras,
+                                        ),
                                       ),
                                     ),
-                                ],
+                                    // Nota: no envolver esto en
+                                    // `RepaintBoundary` — `GanttBar` devuelve
+                                    // un `Positioned` en su propio `build()`,
+                                    // y `Positioned` necesita colgar
+                                    // directamente del `Stack` (sin otro
+                                    // widget de render en medio) para que su
+                                    // `rect` se aplique. Con un
+                                    // `RepaintBoundary` de por medio, el
+                                    // posicionamiento se rompe y la barra se
+                                    // dibuja con tamaño/posición por defecto,
+                                    // tapando todo lo demás — ver la barra
+                                    // gigante que causó esto (probado en la
+                                    // app real).
+                                    for (final fila in layout.filas)
+                                      GanttBar(
+                                        tarea: fila.tarea,
+                                        rect: layout.barras[fila.tarea.id]!,
+                                        color: fila.columna.color,
+                                        dayWidth: _zoom.dayWidth,
+                                        esCritica: rutaCritica.contains(
+                                          fila.tarea.id,
+                                        ),
+                                        onTap: () =>
+                                            widget.onAbrirTarea(fila.tarea),
+                                        onFechasCambiadas: (ini, fin) =>
+                                            _actualizarFechas(
+                                              fila.tarea,
+                                              ini,
+                                              fin,
+                                            ),
+                                        onArrastreCuerpoEnCurso:
+                                            _manejarAutoscrollGantt,
+                                        onArrastreCuerpoTerminado:
+                                            _detenerAutoscrollGantt,
+                                      ),
+                                    for (final fila in layout.filas)
+                                      _asaConector(
+                                        fila,
+                                        layout.barras[fila.tarea.id]!,
+                                      ),
+                                    // `layout.barras[_origenConector]` puede
+                                    // faltar si, mientras se arrastraba el
+                                    // conector, la tarea origen salió del
+                                    // layout (un filtro la ocultó, se archivó,
+                                    // etc.) — sin este chequeo, el `!` de abajo
+                                    // tronaba con un null-check exception.
+                                    if (_origenConector != null &&
+                                        _puntoConector != null &&
+                                        layout.barras[_origenConector] != null)
+                                      CustomPaint(
+                                        size: Size(anchoTotal, altoTotal),
+                                        painter: _ConectorTemporalPainter(
+                                          origen:
+                                              layout.barras[_origenConector]!,
+                                          destino: _puntoConector!,
+                                          // Verde: el destino bajo el punto
+                                          // aceptaría la dependencia. Rojo: lo
+                                          // rechazaría (ciclo, ya existe,
+                                          // auto-referencia). Acento: no hay
+                                          // ninguna barra bajo el punto
+                                          // todavía.
+                                          color:
+                                              switch (_destinoConectorValido) {
+                                                true => const Color(0xFF16A34A),
+                                                false => KanbanColors.danger,
+                                                null => KanbanColors.accent,
+                                              },
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
@@ -790,43 +999,49 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
                         ),
                         _bloqueGantt(
                           filas: layout.filas,
-                          timeline: SingleChildScrollView(
+                          timeline: Scrollbar(
                             controller: _hCtrlBodyReal,
-                            scrollDirection: Axis.horizontal,
-                            child: SizedBox(
-                              width: anchoTotal,
-                              height: altoTotal,
-                              child: Stack(
-                                children: [
-                                  ..._fondoFilas(layout.filas.length),
-                                  for (final fila in layout.filas)
-                                    if (layout.barrasReales[fila.tarea.id]
-                                        case final rectReal?)
-                                      _barraReal(
-                                        rect: rectReal,
-                                        color: fila.columna.color,
-                                        titulo: fila.tarea.titulo,
-                                        enCurso: layout.realesEnCurso.contains(
-                                          fila.tarea.id,
-                                        ),
-                                      )
-                                    else
-                                      Positioned(
-                                        left:
-                                            layout.barras[fila.tarea.id]!.left,
-                                        top:
-                                            layout.barras[fila.tarea.id]!.top +
-                                            (kGanttBarHeight - 14) / 2,
-                                        child: Text(
-                                          'Sin iniciar',
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            fontStyle: FontStyle.italic,
-                                            color: KanbanColors.tdim,
+                            thumbVisibility: true,
+                            child: SingleChildScrollView(
+                              controller: _hCtrlBodyReal,
+                              scrollDirection: Axis.horizontal,
+                              child: SizedBox(
+                                width: anchoTotal,
+                                height: altoTotal,
+                                child: Stack(
+                                  children: [
+                                    ..._fondoFilas(layout.filas.length),
+                                    for (final fila in layout.filas)
+                                      if (layout.barrasReales[fila.tarea.id]
+                                          case final rectReal?)
+                                        _barraReal(
+                                          rect: rectReal,
+                                          color: fila.columna.color,
+                                          titulo: fila.tarea.titulo,
+                                          enCurso: layout.realesEnCurso
+                                              .contains(fila.tarea.id),
+                                        )
+                                      else
+                                        Positioned(
+                                          left: layout
+                                              .barras[fila.tarea.id]!
+                                              .left,
+                                          top:
+                                              layout
+                                                  .barras[fila.tarea.id]!
+                                                  .top +
+                                              (kGanttBarHeight - 14) / 2,
+                                          child: Text(
+                                            'Sin iniciar',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontStyle: FontStyle.italic,
+                                              color: KanbanColors.tdim,
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
                           ),
@@ -883,13 +1098,18 @@ class _BordePunteadoVerticalPainter extends CustomPainter {
 class _ConectorTemporalPainter extends CustomPainter {
   final Rect origen;
   final Offset destino;
+  final Color color;
 
-  const _ConectorTemporalPainter({required this.origen, required this.destino});
+  const _ConectorTemporalPainter({
+    required this.origen,
+    required this.destino,
+    required this.color,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
     final linea = Paint()
-      ..color = KanbanColors.accent
+      ..color = color
       ..strokeWidth = 2
       ..style = PaintingStyle.stroke;
 
@@ -901,10 +1121,12 @@ class _ConectorTemporalPainter extends CustomPainter {
       ..lineTo(midX, destino.dy)
       ..lineTo(destino.dx, destino.dy);
     canvas.drawPath(path, linea);
-    canvas.drawCircle(destino, 4, Paint()..color = KanbanColors.accent);
+    canvas.drawCircle(destino, 4, Paint()..color = color);
   }
 
   @override
   bool shouldRepaint(covariant _ConectorTemporalPainter oldDelegate) =>
-      oldDelegate.origen != origen || oldDelegate.destino != destino;
+      oldDelegate.origen != origen ||
+      oldDelegate.destino != destino ||
+      oldDelegate.color != color;
 }

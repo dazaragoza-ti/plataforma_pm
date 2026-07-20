@@ -278,7 +278,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
   Future<void> _guardar() async {
     setState(() => _guardando = true);
     try {
-      await widget.repository.actualizarTarea(
+      final movidas = await widget.repository.actualizarTarea(
         _tarea!.copyWith(
           titulo: _tituloCtrl.text.trim(),
           descripcion: _descripcionCtrl.text.trim(),
@@ -296,12 +296,34 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
         ),
       );
       widget.onRefresh();
+      // Aviso antes de cerrar: si el cambio de fechas/dependencias empujó
+      // a otras tarjetas en cascada, quien edita debería enterarse aquí
+      // mismo, no tener que abrir cada sucesora después para notarlo.
+      if (movidas > 0 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              movidas == 1
+                  ? 'Se recorrió 1 tarjeta sucesora para respetar la '
+                        'dependencia'
+                  : 'Se recorrieron $movidas tarjetas sucesoras para '
+                        'respetar la dependencia',
+            ),
+          ),
+        );
+      }
       if (mounted) Navigator.of(context).pop();
     } catch (ex) {
+      // El detalle técnico va a la consola, no a la cara del usuario: útil
+      // para depurar, pero un mensaje como "Exception: ..." no le dice
+      // nada a quien está editando una tarea.
+      debugPrint('Error al guardar tarea: $ex');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: $ex'),
+            content: const Text(
+              'No se pudieron guardar los cambios. Intenta de nuevo.',
+            ),
             backgroundColor: KanbanColors.danger,
           ),
         );

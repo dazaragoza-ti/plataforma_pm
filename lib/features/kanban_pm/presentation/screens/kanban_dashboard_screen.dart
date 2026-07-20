@@ -9,6 +9,7 @@ import '../../domain/entities/tarea.dart';
 import '../../domain/entities/tarea_etiqueta.dart';
 import '../widgets/etiquetas_dialog.dart';
 import '../widgets/kanban_column.dart';
+import '../widgets/kanban_gantt/gantt_layout.dart';
 import '../widgets/kanban_gantt/kanban_gantt_view.dart';
 import '../widgets/kanban_graficas_view.dart';
 import '../widgets/kanban_lista_view.dart';
@@ -64,6 +65,11 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
   DateTime? _fechaDesde;
   DateTime? _fechaHasta;
   int _fondoIdx = 0;
+
+  /// Zoom del Gantt recordado aquí (no en `KanbanGanttView`): esa vista se
+  /// desmonta por completo cada vez que se cambia de pestaña, así que sin
+  /// esto siempre volvía a "Día" al regresar.
+  GanttZoom _ganttZoom = GanttZoom.dia;
 
   /// Subtareas pendientes asignadas a mí (a cualquier profundidad, en
   /// cualquier tarea visible), para la campana de notificaciones del
@@ -150,9 +156,7 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
             .toList();
       }
       if (_soloPendientes) {
-        tareas = tareas
-            .where((t) => t.estatus != TareaEstatus.terminado)
-            .toList();
+        tareas = tareas.where((t) => !t.cerrada).toList();
       }
       if (_fechaDesde != null) {
         tareas = tareas
@@ -1170,33 +1174,39 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
                     _columnaGap(i),
                     SizedBox(
                       height: constraints.maxHeight,
-                      child: KanbanColumnView(
-                        columna: visibles[i],
-                        tareas: _tareas
-                            .where((t) => t.estatus == visibles[i].estatus)
-                            .toList(),
-                        etiquetasPorId: _etiquetasPorId,
-                        miembrosPorId: _miembrosPorId,
-                        onTapTarea: _abrirDetalle,
-                        onReordenar: _moverTarea,
-                        onRenombrar: (nuevo) =>
-                            _renombrarColumna(visibles[i].estatus, nuevo),
-                        onArchivarColumna: () =>
-                            _archivarColumna(visibles[i].estatus, true),
-                        onMoverIzquierda: i > 0
-                            ? () => _moverColumna(visibles[i].estatus, -1)
-                            : null,
-                        onMoverDerecha: i < visibles.length - 1
-                            ? () => _moverColumna(visibles[i].estatus, 1)
-                            : null,
-                        onCrearRapida: (titulo) =>
-                            _crearTarjetaRapida(visibles[i].estatus, titulo),
-                        onArchivarTarjeta: _archivarTarjeta,
-                        onEliminarTarjeta: _eliminarTarjeta,
-                        onArrastreGlobalHorizontal:
-                            _manejarAutoscrollHorizontal,
-                        onCambiarLimiteWip: (limite) =>
-                            _cambiarLimiteWip(visibles[i].estatus, limite),
+                      // Aísla el repintado de cada columna: sin esto,
+                      // Skia/CanvasKit repinta el tablero completo cada vez
+                      // que una sola columna cambia (mover una tarjeta,
+                      // hover de un drag, etc.).
+                      child: RepaintBoundary(
+                        child: KanbanColumnView(
+                          columna: visibles[i],
+                          tareas: _tareas
+                              .where((t) => t.estatus == visibles[i].estatus)
+                              .toList(),
+                          etiquetasPorId: _etiquetasPorId,
+                          miembrosPorId: _miembrosPorId,
+                          onTapTarea: _abrirDetalle,
+                          onReordenar: _moverTarea,
+                          onRenombrar: (nuevo) =>
+                              _renombrarColumna(visibles[i].estatus, nuevo),
+                          onArchivarColumna: () =>
+                              _archivarColumna(visibles[i].estatus, true),
+                          onMoverIzquierda: i > 0
+                              ? () => _moverColumna(visibles[i].estatus, -1)
+                              : null,
+                          onMoverDerecha: i < visibles.length - 1
+                              ? () => _moverColumna(visibles[i].estatus, 1)
+                              : null,
+                          onCrearRapida: (titulo) =>
+                              _crearTarjetaRapida(visibles[i].estatus, titulo),
+                          onArchivarTarjeta: _archivarTarjeta,
+                          onEliminarTarjeta: _eliminarTarjeta,
+                          onArrastreGlobalHorizontal:
+                              _manejarAutoscrollHorizontal,
+                          onCambiarLimiteWip: (limite) =>
+                              _cambiarLimiteWip(visibles[i].estatus, limite),
+                        ),
                       ),
                     ),
                   ],
@@ -1254,6 +1264,8 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
                           repository: _repo,
                           onRefresh: _cargar,
                           onAbrirTarea: _abrirDetalle,
+                          zoomInicial: _ganttZoom,
+                          onZoomCambiado: (z) => _ganttZoom = z,
                         ),
                         _Vista.kanban => _tablero(context),
                       },

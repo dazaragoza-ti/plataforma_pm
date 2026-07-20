@@ -32,7 +32,11 @@ abstract class KanbanRepository {
 
   Future<void> archivarTarea(int tareaId, bool archivada);
 
-  Future<void> actualizarTarea(Tarea tarea);
+  /// Devuelve cuántas tareas sucesoras (`dependeDeIds`) se recorrieron en
+  /// cascada como consecuencia de este cambio de fechas — así quien llama
+  /// (p. ej. el Gantt tras un arrastre) puede avisar en el momento que el
+  /// movimiento afectó a otras tarjetas, no solo a la editada.
+  Future<int> actualizarTarea(Tarea tarea);
 
   /// Agrega una subtarea. Si [padreId] es `null` se agrega al nivel raíz de
   /// la tarea; si no, se agrega como subtarea de la actividad con ese id
@@ -594,6 +598,18 @@ class InMemoryKanbanRepository implements KanbanRepository {
     if (origen != nuevoEstatus) {
       _renumerarColumna(origen);
       _registrarFechaRealDeEstatus(tareaId, nuevoEstatus);
+      // El usuario tomó el control manualmente: si la tarjeta venía
+      // auto-pausada por una subtarea, esa bandera ya no aplica una vez
+      // que se mueve a mano — sin limpiarla, se sigue contando como
+      // "bloqueada por subtarea" (KPIs de gráficas, chip de la lista)
+      // para siempre, aunque ya esté en otra columna o hasta terminada.
+      final actualizada = _tareas[_indice(tareaId)];
+      if (actualizada.pausadaPorSubtarea) {
+        _tareas[_indice(tareaId)] = actualizada.copyWith(
+          pausadaPorSubtarea: false,
+          limpiarEstatusAntesDePausa: true,
+        );
+      }
       _registrarHistorial(
         tareaId,
         'Movió la tarjeta de "${_tituloColumna(origen)}" '
@@ -612,9 +628,7 @@ class InMemoryKanbanRepository implements KanbanRepository {
     final t = _tareas[idx];
     if (nuevoEstatus == TareaEstatus.proceso && t.fechaInicioReal == null) {
       _tareas[idx] = t.copyWith(fechaInicioReal: DateTime.now());
-    } else if ((nuevoEstatus == TareaEstatus.terminado ||
-            nuevoEstatus == TareaEstatus.revisado) &&
-        t.fechaFinReal == null) {
+    } else if (nuevoEstatus.esCerrado && t.fechaFinReal == null) {
       _tareas[idx] = t.copyWith(
         fechaInicioReal: t.fechaInicioReal ?? DateTime.now(),
         fechaFinReal: DateTime.now(),
@@ -650,13 +664,54 @@ class InMemoryKanbanRepository implements KanbanRepository {
   }
 
   @override
-  Future<void> actualizarTarea(Tarea tarea) async {
+  Future<int> actualizarTarea(Tarea tarea) async {
     await _latencia();
     final idx = _indice(tarea.id);
     final anterior = _tareas[idx];
     _tareas[idx] = tarea;
-    _reprogramarSucesoresEnCascada(tarea.id);
+    _ajustarContraPredecesoras(tarea.id);
+    final movidas = _reprogramarSucesoresEnCascada(tarea.id);
     _registrarCambiosDeActualizacion(anterior, tarea);
+    return movidas;
+  }
+
+  /// Si [tareaId] queda empezando antes de que termine alguna de sus
+  /// propias predecesoras (`dependeDeIds`), la empuja hacia adelante para
+  /// respetar esa dependencia — el mismo criterio que
+  /// [_reprogramarSucesoresEnCascada] aplica a los sucesores, aquí aplicado
+  /// a la tarea recién editada/arrastrada (p. ej. adelantarla a mano en el
+  /// Gantt más allá de su predecesora, sin haber tocado la predecesora).
+  void _ajustarContraPredecesoras(int tareaId) {
+    final idx = _tareas.indexWhere((t) => t.id == tareaId);
+    if (idx == -1) return;
+    final t = _tareas[idx];
+    if (t.dependeDeIds.isEmpty ||
+        t.fechaInicio == null ||
+        t.fechaVencimiento == null) {
+      return;
+    }
+    DateTime? minInicio;
+    for (final depId in t.dependeDeIds) {
+      final depIdx = _tareas.indexWhere((x) => x.id == depId);
+      if (depIdx == -1) continue;
+      final dep = _tareas[depIdx];
+      if (dep.fechaVencimiento == null) continue;
+      final permitido = dep.fechaVencimiento!.add(const Duration(days: 1));
+      if (minInicio == null || permitido.isAfter(minInicio)) {
+        minInicio = permitido;
+      }
+    }
+    if (minInicio == null || !t.fechaInicio!.isBefore(minInicio)) return;
+    final delta = minInicio.difference(t.fechaInicio!);
+    _tareas[idx] = t.copyWith(
+      fechaInicio: t.fechaInicio!.add(delta),
+      fechaVencimiento: t.fechaVencimiento!.add(delta),
+    );
+    _registrarHistorial(
+      tareaId,
+      'Se movió ${delta.inDays} ${delta.inDays == 1 ? "día" : "días"} '
+      'automáticamente para respetar una dependencia',
+    );
   }
 
   bool _mismosIds(List<int> a, List<int> b) =>
@@ -696,16 +751,17 @@ class InMemoryKanbanRepository implements KanbanRepository {
   /// no un `Set` global de visitados — con un set global, un grafo en
   /// diamante (dos ramas distintas empujando la misma tarea) pierde el
   /// segundo empuje si la primera rama ya la marcó como visitada.
-  void _reprogramarSucesoresEnCascada(
+  int _reprogramarSucesoresEnCascada(
     int origenId, {
     List<int> camino = const [],
   }) {
-    if (camino.contains(origenId)) return;
+    if (camino.contains(origenId)) return 0;
     final idx = _tareas.indexWhere((t) => t.id == origenId);
-    if (idx == -1) return;
+    if (idx == -1) return 0;
     final origen = _tareas[idx];
-    if (origen.fechaVencimiento == null) return;
+    if (origen.fechaVencimiento == null) return 0;
     final siguienteCamino = [...camino, origenId];
+    var movidas = 0;
     for (final suc
         in _tareas.where((t) => t.dependeDeIds.contains(origenId)).toList()) {
       if (suc.fechaInicio == null || suc.fechaVencimiento == null) continue;
@@ -717,9 +773,21 @@ class InMemoryKanbanRepository implements KanbanRepository {
           fechaInicio: suc.fechaInicio!.add(delta),
           fechaVencimiento: suc.fechaVencimiento!.add(delta),
         );
-        _reprogramarSucesoresEnCascada(suc.id, camino: siguienteCamino);
+        // A diferencia de una edición manual, este movimiento de fechas lo
+        // dispara el sistema, no quien tiene la tarjeta asignada — sin
+        // dejarlo en el historial, no hay forma de saber después por qué
+        // cambió la fecha de esta tarea en particular.
+        _registrarHistorial(
+          suc.id,
+          'Se movió ${delta.inDays} ${delta.inDays == 1 ? "día" : "días"} '
+          'automáticamente porque "${origen.titulo}" cambió su fecha de '
+          'vencimiento',
+        );
+        movidas +=
+            1 + _reprogramarSucesoresEnCascada(suc.id, camino: siguienteCamino);
       }
     }
+    return movidas;
   }
 
   @override
@@ -895,8 +963,7 @@ class InMemoryKanbanRepository implements KanbanRepository {
   void _recalcularBloqueoPorSubtareas(int tareaId) {
     final idx = _indice(tareaId);
     final t = _tareas[idx];
-    if (t.estatus == TareaEstatus.terminado ||
-        t.estatus == TareaEstatus.revisado) {
+    if (t.cerrada) {
       return;
     }
     final bloqueada = t.tieneSubtareaBloqueante;

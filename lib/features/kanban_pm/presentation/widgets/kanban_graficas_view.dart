@@ -154,13 +154,7 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
     final miembros = widget.miembros;
 
     final total = tareas.length;
-    final completadas = tareas
-        .where(
-          (t) =>
-              t.estatus == TareaEstatus.terminado ||
-              t.estatus == TareaEstatus.revisado,
-        )
-        .length;
+    final completadas = tareas.where((t) => t.cerrada).length;
     final vencidas = tareas.where((t) => t.vencida).length;
     final enProceso = tareas
         .where((t) => t.estatus == TareaEstatus.proceso)
@@ -339,23 +333,28 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
   }
 
   Widget _tarjeta(String titulo, Widget child) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: KanbanColors.cardDecoration(radius: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            titulo,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: KanbanColors.texto,
+    // `RepaintBoundary` por tarjeta: cada gráfica anima su entrada por su
+    // cuenta (fl_chart), así que sin aislar el repintado, la animación de
+    // una sola gráfica obliga a repintar el resto de la vista en cada frame.
+    return RepaintBoundary(
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: KanbanColors.cardDecoration(radius: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              titulo,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: KanbanColors.texto,
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-          child,
-        ],
+            const SizedBox(height: 16),
+            child,
+          ],
+        ),
       ),
     );
   }
@@ -612,8 +611,7 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
                   // `fechaFinReal` (nunca se limpia, para conservar
                   // historial) quedaría comparándose contra una fecha de
                   // vencimiento ya editada y daría un retraso sin sentido.
-                  (t.estatus == TareaEstatus.terminado ||
-                      t.estatus == TareaEstatus.revisado),
+                  t.cerrada,
             )
             .map(
               (t) => (

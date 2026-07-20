@@ -112,10 +112,14 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
       );
       if (mounted) Navigator.of(context).pop(id);
     } catch (ex) {
+      // El detalle técnico va a la consola, no a la cara del usuario: útil
+      // para depurar, pero un mensaje como "Exception: ..." no le dice
+      // nada a quien está creando una tarea.
+      debugPrint('Error al crear tarea: $ex');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: $ex'),
+            content: const Text('No se pudo crear la tarea. Intenta de nuevo.'),
             backgroundColor: KanbanColors.danger,
           ),
         );

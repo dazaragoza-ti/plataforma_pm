@@ -151,6 +151,14 @@ class KanbanColors {
 
 enum TareaEstatus { tareas, proceso, pausa, terminado, revisado }
 
+extension TareaEstatusX on TareaEstatus {
+  /// Único punto de verdad para "¿este estatus ya está fuera del flujo
+  /// activo?" (terminado o revisado) — evita repetir el `||` en cada sitio
+  /// que necesita tratarlos como equivalentes.
+  bool get esCerrado =>
+      this == TareaEstatus.terminado || this == TareaEstatus.revisado;
+}
+
 class KanbanColumna {
   final TareaEstatus estatus;
   final String titulo;

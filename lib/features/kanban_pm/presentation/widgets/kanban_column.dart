@@ -544,75 +544,15 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
                             : Colors.transparent,
                       ),
                     ),
-                    ListView(
-                      controller: _scrollCtrl,
-                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-                      children: [
-                        for (var i = 0; i < widget.tareas.length; i++) ...[
-                          _gap(i),
-                          Draggable<Tarea>(
-                            data: widget.tareas[i],
-                            feedback: Material(
-                              color: Colors.transparent,
-                              child: SizedBox(
-                                width: 256,
-                                child: KanbanTaskCard(
-                                  tarea: widget.tareas[i],
-                                  etiquetas: widget.tareas[i].etiquetaIds
-                                      .map((id) => widget.etiquetasPorId[id])
-                                      .whereType<TareaEtiqueta>()
-                                      .toList(),
-                                  miembros: widget.tareas[i].miembroIds
-                                      .map((id) => widget.miembrosPorId[id])
-                                      .whereType<Miembro>()
-                                      .toList(),
-                                  onTap: () {},
-                                ),
-                              ),
-                            ),
-                            childWhenDragging: Opacity(
-                              opacity: 0.35,
-                              child: KanbanTaskCard(
-                                tarea: widget.tareas[i],
-                                onTap: () {},
-                              ),
-                            ),
-                            child: KanbanTaskCard(
-                              tarea: widget.tareas[i],
-                              etiquetas: widget.tareas[i].etiquetaIds
-                                  .map((id) => widget.etiquetasPorId[id])
-                                  .whereType<TareaEtiqueta>()
-                                  .toList(),
-                              miembros: widget.tareas[i].miembroIds
-                                  .map((id) => widget.miembrosPorId[id])
-                                  .whereType<Miembro>()
-                                  .toList(),
-                              onTap: () => widget.onTapTarea(widget.tareas[i]),
-                              onArchivar: () =>
-                                  widget.onArchivarTarjeta(widget.tareas[i]),
-                              onEliminar: () =>
-                                  widget.onEliminarTarjeta(widget.tareas[i]),
-                            ),
-                          ),
-                        ],
-                        _gap(widget.tareas.length),
-                        if (widget.tareas.isEmpty)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 24),
-                            child: Center(
-                              child: Text(
-                                'Sin tarjetas',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: KanbanColors.tdim.withValues(
-                                    alpha: 0.8,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        const SizedBox(height: 4),
-                      ],
+                    _ListaTarjetas(
+                      scrollController: _scrollCtrl,
+                      tareas: widget.tareas,
+                      etiquetasPorId: widget.etiquetasPorId,
+                      miembrosPorId: widget.miembrosPorId,
+                      gapBuilder: _gap,
+                      onTapTarea: widget.onTapTarea,
+                      onArchivarTarjeta: widget.onArchivarTarjeta,
+                      onEliminarTarjeta: widget.onEliminarTarjeta,
                     ),
                   ],
                 );
@@ -622,6 +562,117 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
           _footer(),
         ],
       ),
+    );
+  }
+}
+
+/// Lista de tarjetas de una columna, virtualizada con `ListView.builder`:
+/// antes se construían todas las tarjetas de golpe (`ListView(children:
+/// [for...])`), sin importar cuántas cupieran en pantalla. Cada tarjeta va
+/// en su propio [RepaintBoundary] para que arrastrar o repintar una no
+/// obligue a Skia/CanvasKit a re-rasterizar las demás.
+///
+/// Los índices intercalan un "hueco" (`DragTarget` para soltar en una
+/// posición exacta) antes de cada tarjeta, más uno final: con `n` tareas
+/// hay `2n + 2` ítems (huecos + tarjetas + el hueco final + el spacer de
+/// abajo), o 3 ítems fijos si la columna está vacía.
+class _ListaTarjetas extends StatelessWidget {
+  final ScrollController scrollController;
+  final List<Tarea> tareas;
+  final Map<int, TareaEtiqueta> etiquetasPorId;
+  final Map<int, Miembro> miembrosPorId;
+  final Widget Function(int index) gapBuilder;
+  final void Function(Tarea tarea) onTapTarea;
+  final void Function(Tarea tarea) onArchivarTarjeta;
+  final void Function(Tarea tarea) onEliminarTarjeta;
+
+  const _ListaTarjetas({
+    required this.scrollController,
+    required this.tareas,
+    required this.etiquetasPorId,
+    required this.miembrosPorId,
+    required this.gapBuilder,
+    required this.onTapTarea,
+    required this.onArchivarTarjeta,
+    required this.onEliminarTarjeta,
+  });
+
+  Widget _tarjeta(Tarea tarea) {
+    final etiquetas = tarea.etiquetaIds
+        .map((id) => etiquetasPorId[id])
+        .whereType<TareaEtiqueta>()
+        .toList();
+    final miembros = tarea.miembroIds
+        .map((id) => miembrosPorId[id])
+        .whereType<Miembro>()
+        .toList();
+    return RepaintBoundary(
+      key: ValueKey(tarea.id),
+      child: Draggable<Tarea>(
+        data: tarea,
+        feedback: Material(
+          color: Colors.transparent,
+          child: SizedBox(
+            width: 256,
+            child: KanbanTaskCard(
+              tarea: tarea,
+              etiquetas: etiquetas,
+              miembros: miembros,
+              onTap: () {},
+            ),
+          ),
+        ),
+        childWhenDragging: Opacity(
+          opacity: 0.35,
+          child: KanbanTaskCard(tarea: tarea, onTap: () {}),
+        ),
+        child: KanbanTaskCard(
+          tarea: tarea,
+          etiquetas: etiquetas,
+          miembros: miembros,
+          onTap: () => onTapTarea(tarea),
+          onArchivar: () => onArchivarTarjeta(tarea),
+          onEliminar: () => onEliminarTarjeta(tarea),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final n = tareas.length;
+    if (n == 0) {
+      return ListView(
+        controller: scrollController,
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+        children: [
+          gapBuilder(0),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: Text(
+                'Sin tarjetas',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: KanbanColors.tdim.withValues(alpha: 0.8),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+        ],
+      );
+    }
+    return ListView.builder(
+      controller: scrollController,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+      itemCount: 2 * n + 2,
+      itemBuilder: (context, index) {
+        if (index == 2 * n) return gapBuilder(n);
+        if (index == 2 * n + 1) return const SizedBox(height: 4);
+        final pair = index ~/ 2;
+        return index.isEven ? gapBuilder(pair) : _tarjeta(tareas[pair]);
+      },
     );
   }
 }

@@ -3,6 +3,7 @@ import '../../kanban_constants.dart';
 import '../../domain/entities/miembro.dart';
 import '../../domain/entities/tarea.dart';
 import '../../domain/entities/tarea_etiqueta.dart';
+import 'avatar_stack.dart';
 import 'csv_export/descargar_csv.dart';
 
 /// Vista de "Lista": todas las tareas visibles en una tabla ordenable por
@@ -624,62 +625,7 @@ class _KanbanListaViewState extends State<KanbanListaView> {
     }
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          height: 22,
-          width: 14.0 * (miembros.length > 3 ? 3 : miembros.length) + 8,
-          child: Stack(
-            children: [
-              for (
-                var i = 0;
-                i < (miembros.length > 3 ? 3 : miembros.length);
-                i++
-              )
-                Positioned(
-                  left: i * 14.0,
-                  child: CircleAvatar(
-                    radius: 11,
-                    backgroundColor: KanbanColors.bg2,
-                    child: CircleAvatar(
-                      radius: 10,
-                      backgroundColor: miembros[i].colorAvatar,
-                      child: Text(
-                        miembros[i].nombre.isNotEmpty
-                            ? miembros[i].nombre[0].toUpperCase()
-                            : '?',
-                        style: const TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              if (miembros.length > 3)
-                Positioned(
-                  left: 3 * 14.0,
-                  child: CircleAvatar(
-                    radius: 11,
-                    backgroundColor: KanbanColors.bg2,
-                    child: CircleAvatar(
-                      radius: 10,
-                      backgroundColor: KanbanColors.tdim,
-                      child: Text(
-                        '+${miembros.length - 3}',
-                        style: const TextStyle(
-                          fontSize: 8,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ],
+      children: [AvatarStack(miembros: miembros)],
     );
   }
 

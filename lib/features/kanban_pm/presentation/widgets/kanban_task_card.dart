@@ -3,6 +3,7 @@ import '../../kanban_constants.dart';
 import '../../domain/entities/miembro.dart';
 import '../../domain/entities/tarea.dart';
 import '../../domain/entities/tarea_etiqueta.dart';
+import 'avatar_stack.dart';
 
 /// Tarjeta que representa una [Tarea] dentro de una columna del tablero,
 /// con look estilo Trello: portada, etiquetas de color, pastillas de
@@ -217,71 +218,7 @@ class KanbanTaskCard extends StatelessWidget {
                                 ),
                               )
                             else
-                              SizedBox(
-                                height: 22,
-                                width:
-                                    14.0 *
-                                        (miembros.length > 3
-                                            ? 3
-                                            : miembros.length) +
-                                    8,
-                                child: Stack(
-                                  children: [
-                                    for (
-                                      var i = 0;
-                                      i <
-                                          (miembros.length > 3
-                                              ? 3
-                                              : miembros.length);
-                                      i++
-                                    )
-                                      Positioned(
-                                        left: i * 14.0,
-                                        child: CircleAvatar(
-                                          radius: 11,
-                                          backgroundColor: KanbanColors.bg2,
-                                          child: CircleAvatar(
-                                            radius: 10,
-                                            backgroundColor:
-                                                miembros[i].colorAvatar,
-                                            child: Text(
-                                              miembros[i].nombre.isNotEmpty
-                                                  ? miembros[i].nombre[0]
-                                                        .toUpperCase()
-                                                  : '?',
-                                              style: const TextStyle(
-                                                fontSize: 9,
-                                                fontWeight: FontWeight.bold,
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    if (miembros.length > 3)
-                                      Positioned(
-                                        left: 3 * 14.0,
-                                        child: CircleAvatar(
-                                          radius: 11,
-                                          backgroundColor: KanbanColors.bg2,
-                                          child: CircleAvatar(
-                                            radius: 10,
-                                            backgroundColor:
-                                                KanbanColors.tdim,
-                                            child: Text(
-                                              '+${miembros.length - 3}',
-                                              style: const TextStyle(
-                                                fontSize: 8,
-                                                fontWeight: FontWeight.bold,
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
+                              AvatarStack(miembros: miembros),
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(
