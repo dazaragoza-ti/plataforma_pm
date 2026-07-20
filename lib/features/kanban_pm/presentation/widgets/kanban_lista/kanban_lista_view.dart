@@ -38,6 +38,22 @@ class KanbanListaView extends StatefulWidget {
 }
 
 class _KanbanListaViewState extends State<KanbanListaView> {
+  /// Por debajo de este ancho, la `DataTable` (9 columnas, pensada para
+  /// escritorio) se reemplaza por tarjetas apiladas — evita el scroll
+  /// horizontal por completo en vez de solo hacerlo más descubrible.
+  static const _kUmbralMovil = 600.0;
+
+  /// (etiqueta, índice de columna) para el control de orden en móvil —
+  /// mismos índices que `onSort` de la tabla, para compartir `_comparar`.
+  static const _opcionesOrden = [
+    ('Estado', 0),
+    ('Tarea', 1),
+    ('Prioridad', 2),
+    ('Área', 3),
+    ('Vencimiento', 5),
+    ('Progreso', 6),
+  ];
+
   int _columnaOrden = 5;
   bool _ascendente = true;
   final Set<int> _seleccionados = {};
@@ -337,6 +353,213 @@ class _KanbanListaViewState extends State<KanbanListaView> {
     );
   }
 
+  /// Reemplaza el tocar-el-encabezado-de-columna de la tabla (que no existe
+  /// en tarjetas): un menú con las mismas columnas ordenables + un botón
+  /// para invertir la dirección, sin duplicar `_comparar`.
+  Widget _controlOrdenMovil() {
+    final actual = _opcionesOrden.firstWhere(
+      (o) => o.$2 == _columnaOrden,
+      orElse: () => _opcionesOrden.first,
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: PopupMenuButton<int>(
+              tooltip: 'Ordenar por…',
+              onSelected: (idx) => _alOrdenar(idx, _ascendente),
+              itemBuilder: (context) => [
+                for (final o in _opcionesOrden)
+                  PopupMenuItem(
+                    value: o.$2,
+                    child: Text(o.$1, style: const TextStyle(fontSize: 12.5)),
+                  ),
+              ],
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 9,
+                ),
+                decoration: BoxDecoration(
+                  color: KanbanColors.bg2,
+                  borderRadius: BorderRadius.circular(9),
+                  border: Border.all(color: KanbanColors.borde),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.sort_rounded,
+                      size: 15,
+                      color: KanbanColors.tdim,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Ordenar: ${actual.$1}',
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: KanbanColors.texto,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      Icons.expand_more_rounded,
+                      size: 16,
+                      color: KanbanColors.tdim,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            tooltip: _ascendente
+                ? 'Ascendente — tocar para invertir'
+                : 'Descendente — tocar para invertir',
+            icon: Icon(
+              _ascendente
+                  ? Icons.arrow_upward_rounded
+                  : Icons.arrow_downward_rounded,
+              size: 18,
+              color: KanbanColors.texto,
+            ),
+            style: IconButton.styleFrom(
+              backgroundColor: KanbanColors.bg2,
+              side: BorderSide(color: KanbanColors.borde),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(9),
+              ),
+            ),
+            onPressed: () => _alOrdenar(_columnaOrden, !_ascendente),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Tarjeta de una tarea para pantallas angostas — mismo contenido que la
+  /// fila de la tabla (`_celdaEstado`/`_celdaEtiquetas`/etc., reutilizadas
+  /// tal cual), pero apilado verticalmente en vez de en columnas, para no
+  /// necesitar scroll horizontal.
+  Widget _tarjetaMovil(Tarea t) {
+    final seleccionada = _seleccionados.contains(t.id);
+    final etiquetas = t.etiquetaIds
+        .map((id) => widget.etiquetasPorId[id])
+        .whereType<TareaEtiqueta>()
+        .toList();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      clipBehavior: Clip.antiAlias,
+      decoration: KanbanColors.cardDecoration(radius: 12).copyWith(
+        border: Border.all(
+          color: seleccionada ? KanbanColors.accent : KanbanColors.borde,
+          width: seleccionada ? 1.5 : 1,
+        ),
+      ),
+      child: InkWell(
+        onTap: () => widget.onAbrirTarea(t),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  SizedBox(
+                    width: 34,
+                    height: 34,
+                    child: Checkbox(
+                      value: seleccionada,
+                      onChanged: (v) => setState(() {
+                        if (v ?? false) {
+                          _seleccionados.add(t.id);
+                        } else {
+                          _seleccionados.remove(t.id);
+                        }
+                      }),
+                    ),
+                  ),
+                  Expanded(child: _celdaEstado(t)),
+                  PopupMenuButton<String>(
+                    icon: Icon(
+                      Icons.more_vert_rounded,
+                      size: 18,
+                      color: KanbanColors.tdim,
+                    ),
+                    onSelected: (v) {
+                      if (v == 'archivar') {
+                        widget.onArchivarSeleccion([t.id]);
+                      } else {
+                        _eliminarUna(t);
+                      }
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                        value: 'archivar',
+                        child: Text(
+                          'Archivar',
+                          style: TextStyle(fontSize: 12.5),
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'eliminar',
+                        child: Text(
+                          'Eliminar',
+                          style: TextStyle(fontSize: 12.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              Text(
+                t.titulo,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: KanbanColors.texto,
+                ),
+              ),
+              if (etiquetas.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                _celdaEtiquetas(t),
+              ],
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 10,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  _celdaPrioridad(t),
+                  if (t.grupo.isNotEmpty)
+                    Text(
+                      t.grupo,
+                      style: TextStyle(fontSize: 12, color: KanbanColors.tdim),
+                    ),
+                ],
+              ),
+              if (t.actividades.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                _celdaProgreso(t),
+              ],
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  _celdaAsignados(t),
+                  const Spacer(),
+                  _celdaVencimiento(t),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.tareas.isEmpty) {
@@ -354,6 +577,7 @@ class _KanbanListaViewState extends State<KanbanListaView> {
       fontWeight: FontWeight.w600,
       color: KanbanColors.tdim,
     );
+    final esMovil = MediaQuery.sizeOf(context).width < _kUmbralMovil;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -362,145 +586,163 @@ class _KanbanListaViewState extends State<KanbanListaView> {
           _barraSeleccion()
         else
           _barraHerramientas(),
+        if (esMovil) _controlOrdenMovil(),
         Expanded(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Container(
-              decoration: KanbanColors.cardDecoration(radius: 12),
-              clipBehavior: Clip.antiAlias,
-              // `LayoutBuilder` + `ConstrainedBox(minWidth: ...)`: sin esto,
-              // la tabla (más angosta que la pantalla) queda pegada a la
-              // izquierda dentro de una tarjeta ancha, con un vacío enorme
-              // a la derecha — el fondo de filas/encabezado ahora sí llena
-              // el ancho disponible aunque las columnas sigan angostas.
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  // `Scrollbar` visible: con 9 columnas, en tablet/móvil la
-                  // tabla no cabe completa y sin esto no había ninguna
-                  // señal de que se puede desplazar para ver el resto
-                  // (Vencimiento, Progreso, acciones quedaban invisibles).
-                  return Scrollbar(
-                    controller: _hScrollCtrl,
-                    thumbVisibility: true,
-                    child: SingleChildScrollView(
-                      controller: _hScrollCtrl,
-                      scrollDirection: Axis.horizontal,
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minWidth: constraints.maxWidth,
-                        ),
-                        child: SingleChildScrollView(
-                          child: DataTable(
-                            sortColumnIndex: _columnaOrden,
-                            sortAscending: _ascendente,
-                            headingRowColor: WidgetStateProperty.all(
-                              KanbanColors.bg3,
-                            ),
-                            dividerThickness: 1,
-                            horizontalMargin: 16,
-                            columnSpacing: 20,
-                            onSelectAll: (v) => setState(() {
-                              if (v ?? false) {
-                                _seleccionados.addAll(filas.map((t) => t.id));
-                              } else {
-                                _seleccionados.clear();
-                              }
-                            }),
-                            columns: [
-                              DataColumn(
-                                label: Text('Estado', style: estiloEncabezado),
-                                onSort: _alOrdenar,
+          child: esMovil
+              ? ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  itemCount: filas.length,
+                  itemBuilder: (context, i) => _tarjetaMovil(filas[i]),
+                )
+              : Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Container(
+                    decoration: KanbanColors.cardDecoration(radius: 12),
+                    clipBehavior: Clip.antiAlias,
+                    // `LayoutBuilder` + `ConstrainedBox(minWidth: ...)`: sin esto,
+                    // la tabla (más angosta que la pantalla) queda pegada a la
+                    // izquierda dentro de una tarjeta ancha, con un vacío enorme
+                    // a la derecha — el fondo de filas/encabezado ahora sí llena
+                    // el ancho disponible aunque las columnas sigan angostas.
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        // `Scrollbar` visible: con 9 columnas, en tablet/móvil la
+                        // tabla no cabe completa y sin esto no había ninguna
+                        // señal de que se puede desplazar para ver el resto
+                        // (Vencimiento, Progreso, acciones quedaban invisibles).
+                        return Scrollbar(
+                          controller: _hScrollCtrl,
+                          thumbVisibility: true,
+                          child: SingleChildScrollView(
+                            controller: _hScrollCtrl,
+                            scrollDirection: Axis.horizontal,
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                minWidth: constraints.maxWidth,
                               ),
-                              DataColumn(
-                                label: Text('Tarea', style: estiloEncabezado),
-                                onSort: _alOrdenar,
-                              ),
-                              DataColumn(
-                                label: Text(
-                                  'Etiquetas',
-                                  style: estiloEncabezado,
-                                ),
-                              ),
-                              DataColumn(
-                                label: Text(
-                                  'Prioridad',
-                                  style: estiloEncabezado,
-                                ),
-                                onSort: _alOrdenar,
-                              ),
-                              DataColumn(
-                                label: Text('Área', style: estiloEncabezado),
-                                onSort: _alOrdenar,
-                              ),
-                              DataColumn(
-                                label: Text(
-                                  'Asignados',
-                                  style: estiloEncabezado,
-                                ),
-                              ),
-                              DataColumn(
-                                label: Text(
-                                  'Vencimiento',
-                                  style: estiloEncabezado,
-                                ),
-                                onSort: _alOrdenar,
-                              ),
-                              DataColumn(
-                                label: Text(
-                                  'Progreso',
-                                  style: estiloEncabezado,
-                                ),
-                                onSort: _alOrdenar,
-                                numeric: true,
-                              ),
-                              DataColumn(
-                                label: Text('', style: estiloEncabezado),
-                              ),
-                            ],
-                            rows: [
-                              for (final t in filas)
-                                DataRow(
-                                  selected: _seleccionados.contains(t.id),
-                                  onSelectChanged: (v) => setState(() {
+                              child: SingleChildScrollView(
+                                child: DataTable(
+                                  sortColumnIndex: _columnaOrden,
+                                  sortAscending: _ascendente,
+                                  headingRowColor: WidgetStateProperty.all(
+                                    KanbanColors.bg3,
+                                  ),
+                                  dividerThickness: 1,
+                                  horizontalMargin: 16,
+                                  columnSpacing: 20,
+                                  onSelectAll: (v) => setState(() {
                                     if (v ?? false) {
-                                      _seleccionados.add(t.id);
+                                      _seleccionados.addAll(
+                                        filas.map((t) => t.id),
+                                      );
                                     } else {
-                                      _seleccionados.remove(t.id);
+                                      _seleccionados.clear();
                                     }
                                   }),
-                                  cells: [
-                                    DataCell(_celdaEstado(t)),
-                                    DataCell(
-                                      _celdaTitulo(t),
-                                      onTap: () => widget.onAbrirTarea(t),
+                                  columns: [
+                                    DataColumn(
+                                      label: Text(
+                                        'Estado',
+                                        style: estiloEncabezado,
+                                      ),
+                                      onSort: _alOrdenar,
                                     ),
-                                    DataCell(_celdaEtiquetas(t)),
-                                    DataCell(_celdaPrioridad(t)),
-                                    DataCell(
-                                      Text(
-                                        t.grupo.isEmpty ? '—' : t.grupo,
-                                        style: TextStyle(
-                                          fontSize: 12.5,
-                                          color: KanbanColors.texto,
-                                        ),
+                                    DataColumn(
+                                      label: Text(
+                                        'Tarea',
+                                        style: estiloEncabezado,
+                                      ),
+                                      onSort: _alOrdenar,
+                                    ),
+                                    DataColumn(
+                                      label: Text(
+                                        'Etiquetas',
+                                        style: estiloEncabezado,
                                       ),
                                     ),
-                                    DataCell(_celdaAsignados(t)),
-                                    DataCell(_celdaVencimiento(t)),
-                                    DataCell(_celdaProgreso(t)),
-                                    DataCell(_celdaAcciones(t)),
+                                    DataColumn(
+                                      label: Text(
+                                        'Prioridad',
+                                        style: estiloEncabezado,
+                                      ),
+                                      onSort: _alOrdenar,
+                                    ),
+                                    DataColumn(
+                                      label: Text(
+                                        'Área',
+                                        style: estiloEncabezado,
+                                      ),
+                                      onSort: _alOrdenar,
+                                    ),
+                                    DataColumn(
+                                      label: Text(
+                                        'Asignados',
+                                        style: estiloEncabezado,
+                                      ),
+                                    ),
+                                    DataColumn(
+                                      label: Text(
+                                        'Vencimiento',
+                                        style: estiloEncabezado,
+                                      ),
+                                      onSort: _alOrdenar,
+                                    ),
+                                    DataColumn(
+                                      label: Text(
+                                        'Progreso',
+                                        style: estiloEncabezado,
+                                      ),
+                                      onSort: _alOrdenar,
+                                      numeric: true,
+                                    ),
+                                    DataColumn(
+                                      label: Text('', style: estiloEncabezado),
+                                    ),
+                                  ],
+                                  rows: [
+                                    for (final t in filas)
+                                      DataRow(
+                                        selected: _seleccionados.contains(t.id),
+                                        onSelectChanged: (v) => setState(() {
+                                          if (v ?? false) {
+                                            _seleccionados.add(t.id);
+                                          } else {
+                                            _seleccionados.remove(t.id);
+                                          }
+                                        }),
+                                        cells: [
+                                          DataCell(_celdaEstado(t)),
+                                          DataCell(
+                                            _celdaTitulo(t),
+                                            onTap: () => widget.onAbrirTarea(t),
+                                          ),
+                                          DataCell(_celdaEtiquetas(t)),
+                                          DataCell(_celdaPrioridad(t)),
+                                          DataCell(
+                                            Text(
+                                              t.grupo.isEmpty ? '—' : t.grupo,
+                                              style: TextStyle(
+                                                fontSize: 12.5,
+                                                color: KanbanColors.texto,
+                                              ),
+                                            ),
+                                          ),
+                                          DataCell(_celdaAsignados(t)),
+                                          DataCell(_celdaVencimiento(t)),
+                                          DataCell(_celdaProgreso(t)),
+                                          DataCell(_celdaAcciones(t)),
+                                        ],
+                                      ),
                                   ],
                                 ),
-                            ],
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
+                        );
+                      },
                     ),
-                  );
-                },
-              ),
-            ),
-          ),
+                  ),
+                ),
         ),
       ],
     );
