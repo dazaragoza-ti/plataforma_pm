@@ -1137,7 +1137,25 @@ class InMemoryKanbanRepository implements KanbanRepository {
               .toList(),
         );
       }
+      // También limpia al responsable dentro del árbol de subtareas (a
+      // cualquier profundidad) — antes solo se limpiaba `Tarea.miembroIds`,
+      // dejando subtareas apuntando a un miembro que ya no existe y, con
+      // eso, la tarea auto-pausada para siempre (nadie podía "resolver" un
+      // responsable fantasma).
+      _tareas[i] = _tareas[i].copyWith(
+        actividades: _sinResponsableEnArbol(_tareas[i].actividades, miembroId),
+      );
+      _recalcularBloqueoPorSubtareas(_tareas[i].id);
     }
+  }
+
+  List<Actividad> _sinResponsableEnArbol(List<Actividad> lista, int miembroId) {
+    return [
+      for (final a in lista)
+        (a.miembroId == miembroId ? a.conResponsable() : a).copyWith(
+          subActividades: _sinResponsableEnArbol(a.subActividades, miembroId),
+        ),
+    ];
   }
 
   @override
@@ -1159,6 +1177,9 @@ class InMemoryKanbanRepository implements KanbanRepository {
         prioridad: plantilla.prioridad,
         grupo: plantilla.grupo,
         actividades: plantilla.actividades,
+        etiquetaIds: plantilla.etiquetaIds,
+        miembroIds: plantilla.miembroIds,
+        portada: plantilla.portada,
       ),
     );
     return id;

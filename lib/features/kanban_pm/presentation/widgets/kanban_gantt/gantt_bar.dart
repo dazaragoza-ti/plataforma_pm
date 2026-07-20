@@ -144,15 +144,33 @@ class _GanttBarState extends State<GanttBar> {
             alignment: Alignment.centerLeft,
             child: Padding(
               padding: const EdgeInsets.only(left: 5),
-              child: Text(
-                widget.tarea.titulo,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: widget.color,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Mismo ícono (no solo el borde rojo, muy chico en un
+                  // hito) que las barras normales para marcar ruta
+                  // crítica — ver la nota de accesibilidad en `build()`.
+                  if (widget.esCritica) ...[
+                    const Icon(
+                      Icons.bolt_rounded,
+                      size: 12,
+                      color: Color(0xFFDC2626),
+                    ),
+                    const SizedBox(width: 2),
+                  ],
+                  Flexible(
+                    child: Text(
+                      widget.tarea.titulo,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: widget.color,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

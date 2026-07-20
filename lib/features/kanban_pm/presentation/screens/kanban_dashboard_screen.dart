@@ -11,8 +11,8 @@ import '../widgets/etiquetas_dialog.dart';
 import '../widgets/kanban_column.dart';
 import '../widgets/kanban_gantt/gantt_layout.dart';
 import '../widgets/kanban_gantt/kanban_gantt_view.dart';
-import '../widgets/kanban_graficas_view.dart';
-import '../widgets/kanban_lista_view.dart';
+import '../widgets/kanban_graficas/kanban_graficas_view.dart';
+import '../widgets/kanban_lista/kanban_lista_view.dart';
 import '../widgets/nueva_tarea_dialog.dart';
 import '../widgets/plantillas_dialog.dart';
 import '../widgets/tarea_detail_dialog.dart';
@@ -37,6 +37,13 @@ class KanbanDashboardScreen extends StatefulWidget {
 }
 
 class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
+  /// Por debajo de este ancho se considera "celular": el selector de vista
+  /// pasa del header a una barra de navegación inferior. Deliberadamente
+  /// más angosto que el umbral de "selector compacto" (900) — una tablet
+  /// angosta todavía tiene espacio de sobra para el header, es solo el
+  /// celular quien se beneficia de mover la navegación al pulgar.
+  static const _kUmbralMovil = 600.0;
+
   late final KanbanRepository _repo =
       widget.repository ?? InMemoryKanbanRepository();
 
@@ -947,6 +954,19 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
   /// importa en pantallas angostas (móvil, ventana redimensionada).
   Widget _headerGrupoIzquierdo() {
     final archivadas = _columnas.where((c) => c.archivada).length;
+    final anchoPantalla = MediaQuery.sizeOf(context).width;
+    // Por debajo de este ancho, el `SegmentedButton` con ícono+texto ya no
+    // cabe: antes de este fix, en móvil se renderizaba deforme (una mancha
+    // circular con el texto encimado) y en tablet el texto se cortaba a
+    // media palabra ("Kanba"+"n"). Solo ícono evita ambos casos por
+    // completo en vez de intentar que el texto quepa a la fuerza.
+    final selectorCompacto = anchoPantalla < 900;
+    // Por debajo de este otro umbral (celular, no solo tablet angosta), el
+    // selector de vista se muestra como barra de navegación inferior (ver
+    // [_navegacionInferior]) — más alcanzable con el pulgar y no compite
+    // por espacio con la búsqueda/filtros del header. Aquí simplemente se
+    // omite para no duplicarlo.
+    final esMovil = anchoPantalla < _kUmbralMovil;
     return Wrap(
       crossAxisAlignment: WrapCrossAlignment.center,
       spacing: 10,
@@ -975,36 +995,37 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
             color: KanbanColors.texto,
           ),
         ),
-        SegmentedButton<_Vista>(
-          showSelectedIcon: false,
-          segments: const [
-            ButtonSegment(
-              value: _Vista.kanban,
-              icon: Icon(Icons.view_column_rounded, size: 15),
-              label: Text('Kanban'),
+        if (!esMovil)
+          SegmentedButton<_Vista>(
+            showSelectedIcon: false,
+            segments: [
+              ButtonSegment(
+                value: _Vista.kanban,
+                icon: const Icon(Icons.view_column_rounded, size: 15),
+                label: selectorCompacto ? null : const Text('Kanban'),
+              ),
+              ButtonSegment(
+                value: _Vista.lista,
+                icon: const Icon(Icons.view_list_rounded, size: 15),
+                label: selectorCompacto ? null : const Text('Lista'),
+              ),
+              ButtonSegment(
+                value: _Vista.graficas,
+                icon: const Icon(Icons.pie_chart_rounded, size: 15),
+                label: selectorCompacto ? null : const Text('Gráficas'),
+              ),
+              ButtonSegment(
+                value: _Vista.gantt,
+                icon: const Icon(Icons.view_timeline_rounded, size: 15),
+                label: selectorCompacto ? null : const Text('Gantt'),
+              ),
+            ],
+            selected: {_vista},
+            onSelectionChanged: (s) => setState(() => _vista = s.first),
+            style: KanbanColors.segmentedButtonStyle().copyWith(
+              textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 12)),
             ),
-            ButtonSegment(
-              value: _Vista.lista,
-              icon: Icon(Icons.view_list_rounded, size: 15),
-              label: Text('Lista'),
-            ),
-            ButtonSegment(
-              value: _Vista.graficas,
-              icon: Icon(Icons.pie_chart_rounded, size: 15),
-              label: Text('Gráficas'),
-            ),
-            ButtonSegment(
-              value: _Vista.gantt,
-              icon: Icon(Icons.view_timeline_rounded, size: 15),
-              label: Text('Gantt'),
-            ),
-          ],
-          selected: {_vista},
-          onSelectionChanged: (s) => setState(() => _vista = s.first),
-          style: KanbanColors.segmentedButtonStyle().copyWith(
-            textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 12)),
           ),
-        ),
         if (archivadas > 0)
           TextButton.icon(
             onPressed: _abrirListasArchivadas,
@@ -1126,6 +1147,35 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
     );
   }
 
+  /// Barra de navegación inferior para celular — reemplaza al selector de
+  /// vista del header (ver [_headerGrupoIzquierdo]) en pantallas angostas.
+  /// Más alcanzable con el pulgar que un control arriba de la pantalla, el
+  /// patrón esperado en apps móviles para cambiar de sección principal.
+  Widget _navegacionInferior() {
+    return NavigationBar(
+      selectedIndex: _Vista.values.indexOf(_vista),
+      onDestinationSelected: (i) => setState(() => _vista = _Vista.values[i]),
+      destinations: const [
+        NavigationDestination(
+          icon: Icon(Icons.view_column_rounded),
+          label: 'Kanban',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.view_list_rounded),
+          label: 'Lista',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.pie_chart_rounded),
+          label: 'Gráficas',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.view_timeline_rounded),
+          label: 'Gantt',
+        ),
+      ],
+    );
+  }
+
   Widget _header() {
     return Container(
       decoration: BoxDecoration(
@@ -1135,11 +1185,14 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
       // Row de dos `Flexible` (no dos `Expanded` de ancho fijo): cada grupo
       // ocupa solo lo que necesita y el `Wrap` interno absorbe el resto —
-      // así en pantallas anchas el grupo derecho queda pegado a la
-      // izquierda del izquierdo (visual "empujado a la derecha"), y en
-      // angostas ambos grupos pueden partirse en líneas propias sin que el
-      // Row completo se desborde.
+      // en angostas ambos grupos pueden partirse en líneas propias sin que
+      // el Row completo se desborde. `spaceBetween` es lo que realmente
+      // empuja al grupo derecho hasta el borde derecho quesobra espacio:
+      // sin esto, dos `Flexible` sueltos se quedan pegados el uno al otro
+      // a la izquierda (el alineamiento por defecto del Row), dejando todo
+      // el espacio libre sin usar del lado derecho.
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Flexible(child: _headerGrupoIzquierdo()),
@@ -1222,10 +1275,12 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final esMovil = MediaQuery.sizeOf(context).width < _kUmbralMovil;
     return Scaffold(
       backgroundColor: KanbanColors.oscuro
           ? KanbanColors.bg
           : kFondosTablero[_fondoIdx],
+      bottomNavigationBar: esMovil ? _navegacionInferior() : null,
       body: Column(
         children: [
           _header(),

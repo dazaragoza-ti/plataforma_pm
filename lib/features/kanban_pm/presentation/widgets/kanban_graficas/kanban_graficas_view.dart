@@ -1,9 +1,9 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
-import '../../kanban_constants.dart';
-import '../../domain/entities/actividad.dart';
-import '../../domain/entities/miembro.dart';
-import '../../domain/entities/tarea.dart';
+import '../../../kanban_constants.dart';
+import '../../../domain/entities/actividad.dart';
+import '../../../domain/entities/miembro.dart';
+import '../../../domain/entities/tarea.dart';
 
 /// Paleta validada (CVD-safe) para la dona de estatus. Distinta de los
 /// colores de encabezado de columna (que ya llevan ícono + texto propios):
