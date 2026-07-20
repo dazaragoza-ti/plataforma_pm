@@ -43,6 +43,7 @@ class KanbanColumnView extends StatefulWidget {
   final void Function(Tarea tarea) onArchivarTarjeta;
   final void Function(Tarea tarea) onEliminarTarjeta;
   final void Function(Offset globalPos)? onArrastreGlobalHorizontal;
+  final void Function(int? limite)? onCambiarLimiteWip;
 
   const KanbanColumnView({
     super.key,
@@ -60,6 +61,7 @@ class KanbanColumnView extends StatefulWidget {
     required this.onArchivarTarjeta,
     required this.onEliminarTarjeta,
     this.onArrastreGlobalHorizontal,
+    this.onCambiarLimiteWip,
   });
 
   @override
@@ -95,6 +97,50 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
       widget.onRenombrar(nuevo);
     }
     setState(() => _editandoTitulo = false);
+  }
+
+  Future<void> _elegirLimiteWip() async {
+    final ctrl = TextEditingController(
+      text: widget.columna.limiteWip?.toString() ?? '',
+    );
+    // El campo vacío es "sin límite": no hace falta un botón aparte para
+    // quitarlo, basta con borrar el número y guardar.
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: KanbanColors.bg2,
+        surfaceTintColor: Colors.transparent,
+        title: Text(
+          'Límite de WIP',
+          style: TextStyle(color: KanbanColors.texto),
+        ),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          style: TextStyle(color: KanbanColors.texto),
+          decoration: InputDecoration(
+            isDense: true,
+            hintText: 'Sin límite',
+            hintStyle: TextStyle(color: KanbanColors.tdim),
+            helperText: 'Aviso visual: no impide soltar una tarjeta de más.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Guardar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmado == true) {
+      widget.onCambiarLimiteWip?.call(int.tryParse(ctrl.text.trim()));
+    }
   }
 
   void _confirmarNuevaTarjeta() {
@@ -182,7 +228,12 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
     );
   }
 
+  bool get _wipExcedido =>
+      widget.columna.limiteWip != null &&
+      widget.tareas.length > widget.columna.limiteWip!;
+
   Widget _filaTitulo() {
+    final limite = widget.columna.limiteWip;
     return Row(
       children: [
         Flexible(
@@ -199,13 +250,26 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
         ),
         const SizedBox(width: 6),
         Text(
-          '${widget.tareas.length}',
+          limite == null
+              ? '${widget.tareas.length}'
+              : '${widget.tareas.length}/$limite',
           style: TextStyle(
             fontSize: 13,
-            fontWeight: FontWeight.w500,
-            color: KanbanColors.tdim,
+            fontWeight: _wipExcedido ? FontWeight.bold : FontWeight.w500,
+            color: _wipExcedido ? KanbanColors.danger : KanbanColors.tdim,
           ),
         ),
+        if (_wipExcedido) ...[
+          const SizedBox(width: 4),
+          Tooltip(
+            message: 'Se pasó del límite de WIP de esta lista ($limite)',
+            child: Icon(
+              Icons.warning_amber_rounded,
+              size: 14,
+              color: KanbanColors.danger,
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -311,12 +375,21 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
                   widget.onMoverIzquierda?.call();
                 case 'derecha':
                   widget.onMoverDerecha?.call();
+                case 'limite_wip':
+                  _elegirLimiteWip();
               }
             },
             itemBuilder: (context) => [
               const PopupMenuItem(
                 value: 'renombrar',
-                child: Text('Renombrar lista', style: TextStyle(fontSize: 12.5)),
+                child: Text(
+                  'Renombrar lista',
+                  style: TextStyle(fontSize: 12.5),
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'limite_wip',
+                child: Text('Límite de WIP…', style: TextStyle(fontSize: 12.5)),
               ),
               const PopupMenuItem(
                 value: 'archivar',
@@ -435,7 +508,10 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
       decoration: BoxDecoration(
         color: KanbanColors.bg3,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: KanbanColors.borde),
+        border: Border.all(
+          color: _wipExcedido ? KanbanColors.danger : KanbanColors.borde,
+          width: _wipExcedido ? 1.5 : 1,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,

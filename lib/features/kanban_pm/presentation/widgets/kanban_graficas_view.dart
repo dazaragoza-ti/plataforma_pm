@@ -84,37 +84,75 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView>
   String _fecha(DateTime d) =>
       '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
+  /// Mismo lenguaje visual que los chips activables del header del tablero
+  /// (`_headerToggleChip`): fondo/borde de acento cuando hay un rango
+  /// elegido, transparente cuando no — para que "hay un filtro aplicado"
+  /// se note de un vistazo, no solo por el texto del botón.
   Widget _filtroRango() {
     final rango = _rango;
+    final activo = rango != null;
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        OutlinedButton.icon(
-          onPressed: _elegirRango,
-          icon: Icon(
-            Icons.date_range_rounded,
-            size: 16,
-            color: KanbanColors.texto,
-          ),
-          label: Text(
-            rango == null
-                ? 'Filtrar por fecha de inicio'
-                : '${_fecha(rango.start)} – ${_fecha(rango.end)}',
-            style: TextStyle(fontSize: 12, color: KanbanColors.texto),
-          ),
-          style: OutlinedButton.styleFrom(
-            visualDensity: VisualDensity.compact,
-            side: BorderSide(color: KanbanColors.borde),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+        InkWell(
+          borderRadius: BorderRadius.circular(9),
+          onTap: _elegirRango,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: activo ? KanbanColors.accentLight : Colors.transparent,
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(
+                color: activo ? KanbanColors.accent : KanbanColors.borde,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.date_range_rounded,
+                  size: 15,
+                  color: activo ? KanbanColors.accentDark : KanbanColors.texto,
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  activo
+                      ? '${_fecha(rango.start)} – ${_fecha(rango.end)}'
+                      : 'Filtrar por fecha de inicio',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: activo ? FontWeight.w600 : FontWeight.normal,
+                    color: activo
+                        ? KanbanColors.accentDark
+                        : KanbanColors.texto,
+                  ),
+                ),
+              ],
             ),
           ),
         ),
-        if (rango != null)
-          IconButton(
-            tooltip: 'Quitar filtro de fecha',
-            icon: Icon(Icons.close_rounded, size: 18, color: KanbanColors.tdim),
-            onPressed: () => setState(() => _rango = null),
+        if (activo) ...[
+          const SizedBox(width: 6),
+          Tooltip(
+            message: 'Quitar filtro de fecha',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(9),
+              onTap: () => setState(() => _rango = null),
+              child: Container(
+                padding: const EdgeInsets.all(8.5),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(9),
+                  border: Border.all(color: KanbanColors.borde),
+                ),
+                child: Icon(
+                  Icons.close_rounded,
+                  size: 15,
+                  color: KanbanColors.tdim,
+                ),
+              ),
+            ),
           ),
+        ],
       ],
     );
   }
@@ -909,9 +947,9 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView>
             _leyendaDot(KanbanColors.ok, 'Completadas'),
           ],
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 16),
         SizedBox(
-          height: 180,
+          height: 200,
           child: LineChart(
             duration: _kAnimDuracion,
             curve: _kAnimCurva,
@@ -921,10 +959,44 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView>
               gridData: FlGridData(
                 show: true,
                 drawVerticalLine: false,
-                getDrawingHorizontalLine: (v) =>
-                    FlLine(color: KanbanColors.borde, strokeWidth: 1),
+                horizontalInterval: ((maxY + 1) / 4).clamp(1, double.infinity),
+                getDrawingHorizontalLine: (v) => FlLine(
+                  color: KanbanColors.borde,
+                  strokeWidth: 1,
+                  dashArray: const [4, 4],
+                ),
               ),
               borderData: FlBorderData(show: false),
+              lineTouchData: LineTouchData(
+                touchTooltipData: LineTouchTooltipData(
+                  getTooltipColor: (_) => KanbanColors.bg3,
+                  tooltipBorder: BorderSide(color: KanbanColors.borde),
+                  tooltipBorderRadius: BorderRadius.circular(8),
+                  getTooltipItems: (spots) => [
+                    for (final s in spots)
+                      LineTooltipItem(
+                        '${etiquetaSemana(inicios[s.x.toInt()])}\n',
+                        TextStyle(
+                          fontSize: 10.5,
+                          color: KanbanColors.tdim,
+                          fontWeight: FontWeight.normal,
+                        ),
+                        children: [
+                          TextSpan(
+                            text:
+                                '${s.y.toInt()} '
+                                '${s.barIndex == 0 ? 'creadas' : 'completadas'}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: s.bar.color ?? KanbanColors.texto,
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
               titlesData: FlTitlesData(
                 topTitles: const AxisTitles(
                   sideTitles: SideTitles(showTitles: false),
@@ -951,11 +1023,10 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView>
                       if (i < 0 || i >= inicios.length) {
                         return const SizedBox.shrink();
                       }
-                      final d = inicios[i];
                       return Padding(
                         padding: const EdgeInsets.only(top: 6),
                         child: Text(
-                          '${d.day}/${d.month}',
+                          etiquetaSemana(inicios[i]),
                           style: TextStyle(
                             fontSize: 9.5,
                             color: KanbanColors.tdim,
@@ -967,33 +1038,54 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView>
                 ),
               ),
               lineBarsData: [
-                LineChartBarData(
-                  spots: [
-                    for (var i = 0; i < semanas; i++)
-                      FlSpot(i.toDouble(), creadas[i].toDouble()),
-                  ],
-                  isCurved: true,
-                  color: KanbanColors.accent,
-                  barWidth: 2.5,
-                  dotData: const FlDotData(show: true),
-                  belowBarData: BarAreaData(show: false),
-                ),
-                LineChartBarData(
-                  spots: [
-                    for (var i = 0; i < semanas; i++)
-                      FlSpot(i.toDouble(), completadas[i].toDouble()),
-                  ],
-                  isCurved: true,
-                  color: KanbanColors.ok,
-                  barWidth: 2.5,
-                  dotData: const FlDotData(show: true),
-                  belowBarData: BarAreaData(show: false),
-                ),
+                _lineaTendencia(creadas, KanbanColors.accent, semanas),
+                _lineaTendencia(completadas, KanbanColors.ok, semanas),
               ],
             ),
           ),
         ),
       ],
+    );
+  }
+
+  String etiquetaSemana(DateTime d) => '${d.day}/${d.month}';
+
+  /// Línea con relleno degradado (se desvanece hacia abajo) y puntos estilo
+  /// "anillo" (color propio + borde del color de fondo de la tarjeta, para
+  /// que no se vean pegados a la línea) — el mismo lenguaje visual que el
+  /// resto de gráficas de este módulo (`cardDecoration`, animación de
+  /// entrada), en vez del `LineChart` por defecto de fl_chart.
+  LineChartBarData _lineaTendencia(
+    List<int> valores,
+    Color color,
+    int semanas,
+  ) {
+    return LineChartBarData(
+      spots: [
+        for (var i = 0; i < semanas; i++)
+          FlSpot(i.toDouble(), valores[i].toDouble()),
+      ],
+      isCurved: true,
+      curveSmoothness: 0.25,
+      color: color,
+      barWidth: 2.5,
+      dotData: FlDotData(
+        show: true,
+        getDotPainter: (spot, percent, bar, index) => FlDotCirclePainter(
+          radius: 3.5,
+          color: color,
+          strokeWidth: 2,
+          strokeColor: KanbanColors.bg2,
+        ),
+      ),
+      belowBarData: BarAreaData(
+        show: true,
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [color.withValues(alpha: 0.18), color.withValues(alpha: 0)],
+        ),
+      ),
     );
   }
 

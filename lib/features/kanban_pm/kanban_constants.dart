@@ -130,7 +130,8 @@ class KanbanColors {
   /// ambiente, que no combina con el resto del tablero y, al ser un azul
   /// saturado con texto blanco por defecto, dificulta leer la etiqueta.
   static ButtonStyle segmentedButtonStyle() {
-    Color fondo(Set<WidgetState> states) => states.contains(WidgetState.selected)
+    Color fondo(Set<WidgetState> states) =>
+        states.contains(WidgetState.selected)
         ? accentLight
         : Colors.transparent;
     Color texto2(Set<WidgetState> states) =>
@@ -157,20 +158,32 @@ class KanbanColumna {
   final Color color;
   final bool archivada;
 
+  /// Límite de tarjetas (WIP) sugerido para esta columna — `null` significa
+  /// sin límite. Es solo un aviso visual: no bloquea soltar una tarjeta de
+  /// más.
+  final int? limiteWip;
+
   const KanbanColumna({
     required this.estatus,
     required this.titulo,
     required this.icono,
     required this.color,
     this.archivada = false,
+    this.limiteWip,
   });
 
-  KanbanColumna copyWith({String? titulo, bool? archivada}) => KanbanColumna(
+  KanbanColumna copyWith({
+    String? titulo,
+    bool? archivada,
+    int? limiteWip,
+    bool limpiarLimiteWip = false,
+  }) => KanbanColumna(
     estatus: estatus,
     titulo: titulo ?? this.titulo,
     icono: icono,
     color: color,
     archivada: archivada ?? this.archivada,
+    limiteWip: limpiarLimiteWip ? null : (limiteWip ?? this.limiteWip),
   );
 }
 

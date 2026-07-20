@@ -3,6 +3,7 @@ import '../../kanban_constants.dart';
 import '../../domain/entities/miembro.dart';
 import '../../domain/entities/tarea.dart';
 import '../../domain/entities/tarea_etiqueta.dart';
+import 'csv_export/descargar_csv.dart';
 
 /// Vista de "Lista": todas las tareas visibles en una tabla ordenable por
 /// columna — útil para escanear o comparar muchas tarjetas a la vez, algo
@@ -154,6 +155,87 @@ class _KanbanListaViewState extends State<KanbanListaView> {
     await widget.onEliminarSeleccion([t.id]);
   }
 
+  String _campoCsv(String valor) => '"${valor.replaceAll('"', '""')}"';
+
+  void _exportarCsv() {
+    final encabezado = const [
+      'Estado',
+      'Tarea',
+      'Etiquetas',
+      'Prioridad',
+      'Área',
+      'Asignados',
+      'Vencimiento',
+      'Progreso',
+    ].map(_campoCsv).join(',');
+    final lineas = [encabezado];
+    for (final t in _ordenadas) {
+      final idxCol = _indiceColumna(t.estatus);
+      final estado = idxCol == -1 ? '' : widget.columnas[idxCol].titulo;
+      final etiquetas = t.etiquetaIds
+          .map((id) => widget.etiquetasPorId[id]?.nombre)
+          .whereType<String>()
+          .join('; ');
+      final asignados = t.miembroIds
+          .map((id) => widget.miembrosPorId[id]?.nombre)
+          .whereType<String>()
+          .join('; ');
+      lineas.add(
+        [
+          estado,
+          t.titulo,
+          etiquetas,
+          t.prioridad.etiqueta,
+          t.grupo,
+          asignados,
+          t.fechaVencimiento == null ? '' : _fecha(t.fechaVencimiento!),
+          '${(t.progreso * 100).round()}%',
+        ].map(_campoCsv).join(','),
+      );
+    }
+    try {
+      descargarCsv('tareas_kanban.csv', lineas.join('\r\n'));
+    } catch (_) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'Exportar a CSV solo está disponible en la versión web.',
+          ),
+          backgroundColor: KanbanColors.danger,
+        ),
+      );
+    }
+  }
+
+  Widget _barraHerramientas() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '${widget.tareas.length} ${widget.tareas.length == 1 ? 'tarea' : 'tareas'}',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12.5, color: KanbanColors.tdim),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: _exportarCsv,
+            icon: Icon(
+              Icons.file_download_outlined,
+              size: 16,
+              color: KanbanColors.texto,
+            ),
+            label: Text(
+              'Exportar CSV',
+              style: TextStyle(fontSize: 12.5, color: KanbanColors.texto),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _barraSeleccion() {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -269,7 +351,10 @@ class _KanbanListaViewState extends State<KanbanListaView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (_seleccionados.isNotEmpty) _barraSeleccion(),
+        if (_seleccionados.isNotEmpty)
+          _barraSeleccion()
+        else
+          _barraHerramientas(),
         Expanded(
           child: Padding(
             padding: const EdgeInsets.all(16),

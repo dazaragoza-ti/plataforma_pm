@@ -65,6 +65,17 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
   DateTime? _fechaHasta;
   int _fondoIdx = 0;
 
+  /// Subtareas pendientes asignadas a mí (a cualquier profundidad, en
+  /// cualquier tarea visible), para la campana de notificaciones del
+  /// header — ver [_actualizarNotificaciones].
+  List<({Tarea tarea, Actividad actividad})> _notificaciones = [];
+  final Set<int> _actividadIdsVistos = {};
+
+  /// `false` hasta la primera carga completa: evita que todo lo que ya
+  /// estaba asignado desde el arranque se muestre como "nuevo" con un
+  /// toast por cada tarjeta.
+  bool _notificacionesListas = false;
+
   List<KanbanColumna> get _columnasVisibles =>
       _columnas.where((c) => !c.archivada).toList();
 
@@ -123,6 +134,11 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
       tareas = tareas
           .where((t) => !t.archivada && !columnasArchivadas.contains(t.estatus))
           .toList();
+      // Antes de aplicar "Mis tareas"/"Solo pendientes"/fechas (que son
+      // filtros de lo que se *muestra*): la campana de notificaciones debe
+      // reflejar todas las subtareas asignadas a mí, no solo las que caben
+      // en el filtro de vista actual.
+      final baseParaNotificaciones = tareas;
       if (_misTareas) {
         final miId = _miIdDemo;
         tareas = tareas
@@ -157,7 +173,13 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
             .toList();
       }
       if (!mounted) return;
+      final nuevasNotificaciones = _actualizarNotificaciones(
+        baseParaNotificaciones,
+      );
       setState(() => _tareas = tareas);
+      if (nuevasNotificaciones.isNotEmpty) {
+        _avisarNuevasAsignaciones(nuevasNotificaciones);
+      }
     } catch (ex) {
       if (mounted) _toast('Error al cargar: $ex', ok: false);
     } finally {
@@ -168,6 +190,125 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
         });
       }
     }
+  }
+
+  /// Recalcula qué subtareas siguen asignadas a mí y pendientes, a partir
+  /// de [tareas] (ya filtradas de archivadas, pero antes de "Mis
+  /// tareas"/"Solo pendientes"/fechas). Devuelve las que son nuevas desde
+  /// la última carga (vacío en la primera carga, para no bombardear con
+  /// toasts todo lo que ya estaba asignado desde el arranque).
+  List<({Tarea tarea, Actividad actividad})> _actualizarNotificaciones(
+    List<Tarea> tareas,
+  ) {
+    final miId = _miIdDemo;
+    final actuales = miId == -1
+        ? const <({Tarea tarea, Actividad actividad})>[]
+        : _subtareasAsignadasA(tareas, miId);
+    final nuevas = _notificacionesListas
+        ? actuales
+              .where((n) => !_actividadIdsVistos.contains(n.actividad.id))
+              .toList()
+        : const <({Tarea tarea, Actividad actividad})>[];
+    _notificaciones = actuales;
+    _actividadIdsVistos
+      ..clear()
+      ..addAll(actuales.map((n) => n.actividad.id));
+    _notificacionesListas = true;
+    return nuevas;
+  }
+
+  void _avisarNuevasAsignaciones(
+    List<({Tarea tarea, Actividad actividad})> nuevas,
+  ) {
+    if (nuevas.length == 1) {
+      final n = nuevas.first;
+      _toastAccion(
+        'Te asignaron la subtarea "${n.actividad.descripcion}" '
+            'en "${n.tarea.titulo}"',
+        'Ver',
+        () => _abrirDetalle(n.tarea),
+      );
+    } else {
+      _toastAccion(
+        'Te asignaron ${nuevas.length} subtareas nuevas',
+        'Ver',
+        _abrirNotificaciones,
+      );
+    }
+  }
+
+  Future<void> _abrirNotificaciones() async {
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: KanbanColors.bg2,
+        surfaceTintColor: Colors.transparent,
+        title: Text(
+          'Subtareas asignadas a mí',
+          style: TextStyle(color: KanbanColors.texto),
+        ),
+        content: SizedBox(
+          width: 360,
+          child: _notificaciones.isEmpty
+              ? Text(
+                  'No tienes subtareas pendientes.',
+                  style: TextStyle(color: KanbanColors.tdim),
+                )
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final n in _notificaciones)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          Icons.assignment_ind_outlined,
+                          size: 18,
+                          color: KanbanColors.accent,
+                        ),
+                        title: Text(
+                          n.actividad.descripcion,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: KanbanColors.texto,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'en "${n.tarea.titulo}"',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: KanbanColors.tdim,
+                          ),
+                        ),
+                        onTap: () {
+                          Navigator.of(ctx).pop();
+                          _abrirDetalle(n.tarea);
+                        },
+                      ),
+                  ],
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _cambiarLimiteWip(TareaEstatus estatus, int? limite) async {
+    setState(() {
+      final idx = _columnas.indexWhere((c) => c.estatus == estatus);
+      if (idx != -1) {
+        _columnas[idx] = _columnas[idx].copyWith(
+          limiteWip: limite,
+          limpiarLimiteWip: limite == null,
+        );
+      }
+    });
+    await _repo.actualizarLimiteWipColumna(estatus, limite);
   }
 
   void _onSearchChanged(String _) {
@@ -739,6 +880,22 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
     );
   }
 
+  Widget _botonNotificaciones() {
+    final n = _notificaciones.length;
+    return Badge(
+      label: Text('$n'),
+      isLabelVisible: n > 0,
+      backgroundColor: KanbanColors.danger,
+      child: _headerIconButton(
+        icon: Icons.notifications_outlined,
+        tooltip: n == 0
+            ? 'Sin subtareas pendientes asignadas a mí'
+            : '$n ${n == 1 ? 'subtarea asignada a mí' : 'subtareas asignadas a mí'}',
+        onTap: _abrirNotificaciones,
+      ),
+    );
+  }
+
   Widget _headerToggleChip({
     required IconData icon,
     required String label,
@@ -909,6 +1066,7 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
           active: _filtrosActivos,
           onTap: _abrirFiltros,
         ),
+        _botonNotificaciones(),
         _headerToggleChip(
           icon: Icons.person_rounded,
           label: 'Mis tareas',
@@ -1037,6 +1195,8 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen> {
                         onEliminarTarjeta: _eliminarTarjeta,
                         onArrastreGlobalHorizontal:
                             _manejarAutoscrollHorizontal,
+                        onCambiarLimiteWip: (limite) =>
+                            _cambiarLimiteWip(visibles[i].estatus, limite),
                       ),
                     ),
                   ],
@@ -1104,4 +1264,27 @@ bool _tengoSubtareaPendiente(List<Actividad> actividades, int miembroId) {
     if (_tengoSubtareaPendiente(a.subActividades, miembroId)) return true;
   }
   return false;
+}
+
+/// Recolecta, con su tarea dueña, cada subtarea (a cualquier profundidad)
+/// asignada a [miembroId] que siga sin marcarse terminada — la fuente de
+/// datos de la campana de notificaciones del header.
+List<({Tarea tarea, Actividad actividad})> _subtareasAsignadasA(
+  List<Tarea> tareas,
+  int miembroId,
+) {
+  final resultado = <({Tarea tarea, Actividad actividad})>[];
+  void recorrer(Tarea t, List<Actividad> lista) {
+    for (final a in lista) {
+      if (a.miembroId == miembroId && !a.terminada) {
+        resultado.add((tarea: t, actividad: a));
+      }
+      recorrer(t, a.subActividades);
+    }
+  }
+
+  for (final t in tareas) {
+    recorrer(t, t.actividades);
+  }
+  return resultado;
 }

@@ -46,7 +46,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         setState(() {
           _imageFile = pickedFile;
         });
-        
+
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Foto de perfil actualizada correctamente')),
         );

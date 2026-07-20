@@ -477,6 +477,16 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
   /// Etiqueta de sección flat/minimal (mayúsculas, tenue, sin negrita)
   /// compartida por los campos simples del formulario — evita repetir el
   /// mismo `Text` con estilo distinto en cada sección.
+  String _formatoRelativo(DateTime fecha) {
+    final diff = DateTime.now().difference(fecha);
+    if (diff.inMinutes < 1) return 'ahora';
+    if (diff.inMinutes < 60) return 'hace ${diff.inMinutes} min';
+    if (diff.inHours < 24) return 'hace ${diff.inHours} h';
+    if (diff.inDays < 7) return 'hace ${diff.inDays} d';
+    return '${fecha.day.toString().padLeft(2, '0')}/'
+        '${fecha.month.toString().padLeft(2, '0')}/${fecha.year}';
+  }
+
   Widget _seccionLabel(String texto) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -1637,6 +1647,96 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   ),
                                   onPressed: _agregarComentario,
                                 ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Divider(color: KanbanColors.borde),
+                          Theme(
+                            data: Theme.of(
+                              context,
+                            ).copyWith(dividerColor: Colors.transparent),
+                            child: ExpansionTile(
+                              tilePadding: EdgeInsets.zero,
+                              childrenPadding: const EdgeInsets.only(bottom: 8),
+                              iconColor: KanbanColors.tdim,
+                              collapsedIconColor: KanbanColors.tdim,
+                              title: Row(
+                                children: [
+                                  Icon(
+                                    Icons.history_rounded,
+                                    size: 15,
+                                    color: KanbanColors.texto,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'HISTORIAL (${t.historial.length})',
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.bold,
+                                      color: KanbanColors.texto,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              children: [
+                                if (t.historial.isEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 6,
+                                    ),
+                                    child: Text(
+                                      'Todavía no hay actividad registrada.',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: KanbanColors.tdim,
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  for (final ev in t.historial.reversed)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 8),
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              top: 3,
+                                            ),
+                                            child: Icon(
+                                              Icons.circle,
+                                              size: 5,
+                                              color: KanbanColors.tdim,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  ev.mensaje,
+                                                  style: TextStyle(
+                                                    fontSize: 12.5,
+                                                    color: KanbanColors.texto,
+                                                  ),
+                                                ),
+                                                Text(
+                                                  '${ev.autor} · ${_formatoRelativo(ev.fecha)}',
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: KanbanColors.tdim,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                               ],
                             ),
                           ),

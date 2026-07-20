@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../domain/entities/actividad.dart';
 import '../domain/entities/comentario.dart';
+import '../domain/entities/historial_evento.dart';
 import '../domain/entities/miembro.dart';
 import '../domain/entities/tarea.dart';
 import '../domain/entities/tarea_etiqueta.dart';
@@ -37,11 +38,7 @@ abstract class KanbanRepository {
   /// la tarea; si no, se agrega como subtarea de la actividad con ese id
   /// (a cualquier profundidad del árbol) — así el responsable de una
   /// subtarea puede a su vez delegar partes de su trabajo.
-  Future<int> agregarActividad(
-    int tareaId,
-    String descripcion, {
-    int? padreId,
-  });
+  Future<int> agregarActividad(int tareaId, String descripcion, {int? padreId});
 
   Future<void> toggleActividad(int tareaId, int actividadId);
 
@@ -74,6 +71,10 @@ abstract class KanbanRepository {
   Future<void> archivarColumna(TareaEstatus estatus, bool archivada);
 
   Future<void> reordenarColumnas(List<TareaEstatus> nuevoOrden);
+
+  /// Fija (o quita, si [limite] es `null`) el límite de WIP sugerido de una
+  /// columna — solo un aviso visual, no impide soltar una tarjeta de más.
+  Future<void> actualizarLimiteWipColumna(TareaEstatus estatus, int? limite);
 
   // Etiquetas (labels) del tablero.
   Future<List<TareaEtiqueta>> listarEtiquetas();
@@ -117,6 +118,7 @@ class InMemoryKanbanRepository implements KanbanRepository {
   int _nextEtiquetaId = 1;
   int _nextMiembroId = 1;
   int _nextPlantillaId = 1;
+  int _nextHistorialId = 1;
 
   InMemoryKanbanRepository() {
     _seed();
@@ -132,10 +134,26 @@ class InMemoryKanbanRepository implements KanbanRepository {
     final etInterno = _nextEtiquetaId++;
     final etBloqueado = _nextEtiquetaId++;
     _etiquetas.addAll([
-      TareaEtiqueta(id: etUrgente, nombre: 'Urgente', color: const Color(0xFFEF4444)),
-      TareaEtiqueta(id: etCliente, nombre: 'Cliente', color: const Color(0xFF3B82F6)),
-      TareaEtiqueta(id: etInterno, nombre: 'Interno', color: const Color(0xFF22C55E)),
-      TareaEtiqueta(id: etBloqueado, nombre: 'Bloqueado', color: const Color(0xFFA855F7)),
+      TareaEtiqueta(
+        id: etUrgente,
+        nombre: 'Urgente',
+        color: const Color(0xFFEF4444),
+      ),
+      TareaEtiqueta(
+        id: etCliente,
+        nombre: 'Cliente',
+        color: const Color(0xFF3B82F6),
+      ),
+      TareaEtiqueta(
+        id: etInterno,
+        nombre: 'Interno',
+        color: const Color(0xFF22C55E),
+      ),
+      TareaEtiqueta(
+        id: etBloqueado,
+        nombre: 'Bloqueado',
+        color: const Color(0xFFA855F7),
+      ),
     ]);
 
     final miembrosSeed = <int>[];
@@ -189,6 +207,26 @@ class InMemoryKanbanRepository implements KanbanRepository {
         importancia: kImportanciaDemo[0],
         orden: ordenTerminado++,
         etiquetaIds: [etInterno],
+        historial: [
+          HistorialEvento(
+            id: _nextHistorialId++,
+            autor: kUsuarioActualDemo,
+            mensaje: 'Creó la tarjeta',
+            fecha: ahora.subtract(const Duration(days: 2, hours: 1)),
+          ),
+          HistorialEvento(
+            id: _nextHistorialId++,
+            autor: kUsuarioActualDemo,
+            mensaje: 'Movió la tarjeta de "TAREAS" a "PROCESO"',
+            fecha: ahora.subtract(const Duration(days: 2)),
+          ),
+          HistorialEvento(
+            id: _nextHistorialId++,
+            autor: kUsuarioActualDemo,
+            mensaje: 'Movió la tarjeta de "PROCESO" a "TERMINADO"',
+            fecha: ahora,
+          ),
+        ],
       ),
       Tarea(
         id: idMaterial,
@@ -208,10 +246,43 @@ class InMemoryKanbanRepository implements KanbanRepository {
             terminada: true,
           ),
           Actividad(id: _nextActividadId++, descripcion: 'Cotizar lámina'),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Confirmar precio con proveedor',
+            miembroId: mSalazar,
+          ),
         ],
         orden: ordenProceso++,
         etiquetaIds: [etCliente],
         dependeDeIds: [idMedidas],
+        historial: [
+          HistorialEvento(
+            id: _nextHistorialId++,
+            autor: kUsuarioActualDemo,
+            mensaje: 'Creó la tarjeta',
+            fecha: ahora.subtract(const Duration(days: 1, minutes: 30)),
+          ),
+          HistorialEvento(
+            id: _nextHistorialId++,
+            autor: kUsuarioActualDemo,
+            mensaje: 'Movió la tarjeta de "TAREAS" a "PROCESO"',
+            fecha: ahora.subtract(const Duration(days: 1)),
+          ),
+          HistorialEvento(
+            id: _nextHistorialId++,
+            autor: kUsuarioActualDemo,
+            mensaje: 'Marcó la subtarea "Revisar plano" como completada',
+            fecha: ahora.subtract(const Duration(hours: 20)),
+          ),
+          HistorialEvento(
+            id: _nextHistorialId++,
+            autor: kUsuarioActualDemo,
+            mensaje:
+                'Asignó a J. Salazar como responsable de '
+                '"Confirmar precio con proveedor"',
+            fecha: ahora.subtract(const Duration(hours: 2)),
+          ),
+        ],
       ),
       Tarea(
         id: idLamina,
@@ -223,9 +294,32 @@ class InMemoryKanbanRepository implements KanbanRepository {
         asignadoPor: kUsuarioActualDemo,
         fechaInicio: ahora,
         fechaVencimiento: ahora.add(const Duration(days: 5)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Confirmar fecha de entrega con proveedor',
+            miembroId: mSalazar,
+          ),
+        ],
         orden: ordenPausa++,
         etiquetaIds: [etBloqueado],
         dependeDeIds: [idMaterial],
+        historial: [
+          HistorialEvento(
+            id: _nextHistorialId++,
+            autor: kUsuarioActualDemo,
+            mensaje: 'Creó la tarjeta',
+            fecha: ahora.subtract(const Duration(hours: 1)),
+          ),
+          HistorialEvento(
+            id: _nextHistorialId++,
+            autor: kUsuarioActualDemo,
+            mensaje:
+                'Asignó a J. Salazar como responsable de '
+                '"Confirmar fecha de entrega con proveedor"',
+            fecha: ahora.subtract(const Duration(minutes: 30)),
+          ),
+        ],
       ),
       Tarea(
         id: idCotizacion,
@@ -264,6 +358,14 @@ class InMemoryKanbanRepository implements KanbanRepository {
         asignadoPor: kUsuarioActualDemo,
         fechaInicio: ahora.add(const Duration(days: 8)),
         fechaVencimiento: ahora.add(const Duration(days: 12)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Revisar cumplimiento normativo',
+            terminada: true,
+            departamento: 'Calidad',
+          ),
+        ],
         comentarios: [
           Comentario(
             id: _nextComentarioId++,
@@ -287,6 +389,14 @@ class InMemoryKanbanRepository implements KanbanRepository {
         fechaVencimiento: ahora.subtract(const Duration(days: 2)),
         fechaInicioReal: ahora.subtract(const Duration(days: 3)),
         fechaFinReal: ahora.subtract(const Duration(days: 1)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Exportar archivos finales',
+            terminada: true,
+            miembroId: mGomez,
+          ),
+        ],
         orden: ordenTerminado++,
         portada: const Color(0xFFA855F7),
       ),
@@ -300,6 +410,13 @@ class InMemoryKanbanRepository implements KanbanRepository {
         asignadoPor: kUsuarioActualDemo,
         fechaInicio: ahora.subtract(const Duration(days: 2)),
         fechaVencimiento: ahora.subtract(const Duration(days: 1)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Cotizar con al menos 2 proveedores',
+            departamento: 'Sistemas',
+          ),
+        ],
         orden: ordenTareas++,
       ),
     ]);
@@ -321,7 +438,12 @@ class InMemoryKanbanRepository implements KanbanRepository {
         descripcion: 'Describir el síntoma, cuándo empezó y su impacto.',
         prioridad: TareaPrioridad.urgente,
         grupo: 'Sistemas',
-        actividades: const ['Reproducir', 'Diagnosticar causa', 'Corregir', 'Validar'],
+        actividades: const [
+          'Reproducir',
+          'Diagnosticar causa',
+          'Corregir',
+          'Validar',
+        ],
       ),
       TareaPlantilla(
         id: _nextPlantillaId++,
@@ -338,6 +460,51 @@ class InMemoryKanbanRepository implements KanbanRepository {
     if (idx == -1) throw Exception('Tarea #$tareaId no encontrada');
     return idx;
   }
+
+  String _tituloColumna(TareaEstatus estatus) => _columnas
+      .firstWhere(
+        (c) => c.estatus == estatus,
+        orElse: () => KanbanColumna(
+          estatus: estatus,
+          titulo: estatus.name,
+          icono: Icons.bookmark_rounded,
+          color: Colors.transparent,
+        ),
+      )
+      .titulo;
+
+  /// Agrega una entrada al historial de la tarea [tareaId]. No falla si la
+  /// tarea ya no existe (p. ej. una cascada que llega tarde tras borrarla).
+  void _registrarHistorial(int tareaId, String mensaje) {
+    final idx = _tareas.indexWhere((t) => t.id == tareaId);
+    if (idx == -1) return;
+    _tareas[idx] = _tareas[idx].copyWith(
+      historial: [
+        ..._tareas[idx].historial,
+        HistorialEvento(
+          id: _nextHistorialId++,
+          autor: kUsuarioActualDemo,
+          mensaje: mensaje,
+          fecha: DateTime.now(),
+        ),
+      ],
+    );
+  }
+
+  Actividad? _buscarActividad(List<Actividad> lista, int id) {
+    for (final a in lista) {
+      if (a.id == id) return a;
+      final enHijas = _buscarActividad(a.subActividades, id);
+      if (enHijas != null) return enHijas;
+    }
+    return null;
+  }
+
+  /// `true` si el contenido de algún comentario de [lista] contiene [like]
+  /// — usado por la búsqueda del tablero para que también encuentre
+  /// tarjetas por lo dicho en sus comentarios.
+  bool _comentariosContienen(List<Comentario> lista, String like) =>
+      lista.any((c) => c.contenido.toLowerCase().contains(like));
 
   void _renumerarColumna(TareaEstatus estatus) {
     final enColumna = _tareas.where((t) => t.estatus == estatus).toList()
@@ -373,7 +540,8 @@ class InMemoryKanbanRepository implements KanbanRepository {
                           .toLowerCase()
                           .contains(like),
                     ) ||
-                    _actividadesContienen(t.actividades, like),
+                    _actividadesContienen(t.actividades, like) ||
+                    _comentariosContienen(t.comentarios, like),
               )
               .toList();
     final resultado = List<Tarea>.of(base)
@@ -396,6 +564,7 @@ class InMemoryKanbanRepository implements KanbanRepository {
     _tareas.add(
       tarea.copyWith(id: id, orden: enColumna, actividades: actividades),
     );
+    _registrarHistorial(id, 'Creó la tarjeta');
     return id;
   }
 
@@ -408,10 +577,11 @@ class InMemoryKanbanRepository implements KanbanRepository {
     await _latencia();
     final idx = _indice(tareaId);
     final origen = _tareas[idx].estatus;
-    final destinoTareas = _tareas
-        .where((t) => t.id != tareaId && t.estatus == nuevoEstatus)
-        .toList()
-      ..sort((a, b) => a.orden.compareTo(b.orden));
+    final destinoTareas =
+        _tareas
+            .where((t) => t.id != tareaId && t.estatus == nuevoEstatus)
+            .toList()
+          ..sort((a, b) => a.orden.compareTo(b.orden));
     final pos = (posicion ?? destinoTareas.length).clamp(
       0,
       destinoTareas.length,
@@ -419,14 +589,16 @@ class InMemoryKanbanRepository implements KanbanRepository {
     destinoTareas.insert(pos, _tareas[idx]);
     for (var i = 0; i < destinoTareas.length; i++) {
       final tIdx = _tareas.indexWhere((t) => t.id == destinoTareas[i].id);
-      _tareas[tIdx] = _tareas[tIdx].copyWith(
-        estatus: nuevoEstatus,
-        orden: i,
-      );
+      _tareas[tIdx] = _tareas[tIdx].copyWith(estatus: nuevoEstatus, orden: i);
     }
     if (origen != nuevoEstatus) {
       _renumerarColumna(origen);
       _registrarFechaRealDeEstatus(tareaId, nuevoEstatus);
+      _registrarHistorial(
+        tareaId,
+        'Movió la tarjeta de "${_tituloColumna(origen)}" '
+        'a "${_tituloColumna(nuevoEstatus)}"',
+      );
     }
   }
 
@@ -471,14 +643,49 @@ class InMemoryKanbanRepository implements KanbanRepository {
     final idx = _indice(tareaId);
     _tareas[idx] = _tareas[idx].copyWith(archivada: archivada);
     _renumerarColumna(_tareas[idx].estatus);
+    _registrarHistorial(
+      tareaId,
+      archivada ? 'Archivó la tarjeta' : 'Restauró la tarjeta',
+    );
   }
 
   @override
   Future<void> actualizarTarea(Tarea tarea) async {
     await _latencia();
     final idx = _indice(tarea.id);
+    final anterior = _tareas[idx];
     _tareas[idx] = tarea;
     _reprogramarSucesoresEnCascada(tarea.id);
+    _registrarCambiosDeActualizacion(anterior, tarea);
+  }
+
+  bool _mismosIds(List<int> a, List<int> b) =>
+      a.length == b.length && a.toSet().containsAll(b);
+
+  /// Compara [anterior] contra [nueva] y agrega al historial un único
+  /// mensaje combinado con lo que cambió — sin registrar nada si el
+  /// guardado no modificó nada (p. ej. abrir y cerrar el detalle sin tocar
+  /// campos).
+  void _registrarCambiosDeActualizacion(Tarea anterior, Tarea nueva) {
+    final cambios = <String>[];
+    if (anterior.titulo != nueva.titulo) {
+      cambios.add('renombró la tarjeta a "${nueva.titulo}"');
+    }
+    if (anterior.fechaVencimiento != nueva.fechaVencimiento) {
+      cambios.add('cambió la fecha de vencimiento');
+    }
+    if (!_mismosIds(anterior.etiquetaIds, nueva.etiquetaIds)) {
+      cambios.add('cambió las etiquetas');
+    }
+    if (!_mismosIds(anterior.miembroIds, nueva.miembroIds)) {
+      cambios.add('cambió los asignados');
+    }
+    if (!_mismosIds(anterior.dependeDeIds, nueva.dependeDeIds)) {
+      cambios.add('cambió las dependencias');
+    }
+    if (cambios.isEmpty) return;
+    final mensaje = cambios[0][0].toUpperCase() + cambios[0].substring(1);
+    _registrarHistorial(nueva.id, [mensaje, ...cambios.skip(1)].join('; '));
   }
 
   /// Empuja hacia adelante, recursivamente, cualquier tarea sucesora
@@ -499,9 +706,8 @@ class InMemoryKanbanRepository implements KanbanRepository {
     final origen = _tareas[idx];
     if (origen.fechaVencimiento == null) return;
     final siguienteCamino = [...camino, origenId];
-    for (final suc in _tareas
-        .where((t) => t.dependeDeIds.contains(origenId))
-        .toList()) {
+    for (final suc
+        in _tareas.where((t) => t.dependeDeIds.contains(origenId)).toList()) {
       if (suc.fechaInicio == null || suc.fechaVencimiento == null) continue;
       final minInicio = origen.fechaVencimiento!.add(const Duration(days: 1));
       if (suc.fechaInicio!.isBefore(minInicio)) {
@@ -530,6 +736,7 @@ class InMemoryKanbanRepository implements KanbanRepository {
         ? [..._tareas[idx].actividades, nueva]
         : _conSubactividadAgregada(_tareas[idx].actividades, padreId, nueva);
     _tareas[idx] = _tareas[idx].copyWith(actividades: actividades);
+    _registrarHistorial(tareaId, 'Agregó la subtarea "$descripcion"');
     return id;
   }
 
@@ -537,6 +744,7 @@ class InMemoryKanbanRepository implements KanbanRepository {
   Future<void> toggleActividad(int tareaId, int actividadId) async {
     await _latencia();
     final idx = _indice(tareaId);
+    final actual = _buscarActividad(_tareas[idx].actividades, actividadId);
     final actividades = _conActividadTransformada(
       _tareas[idx].actividades,
       actividadId,
@@ -544,15 +752,30 @@ class InMemoryKanbanRepository implements KanbanRepository {
     );
     _tareas[idx] = _tareas[idx].copyWith(actividades: actividades);
     _recalcularBloqueoPorSubtareas(tareaId);
+    if (actual != null) {
+      _registrarHistorial(
+        tareaId,
+        actual.terminada
+            ? 'Marcó la subtarea "${actual.descripcion}" como pendiente'
+            : 'Marcó la subtarea "${actual.descripcion}" como completada',
+      );
+    }
   }
 
   @override
   Future<void> eliminarActividad(int tareaId, int actividadId) async {
     await _latencia();
     final idx = _indice(tareaId);
+    final actual = _buscarActividad(_tareas[idx].actividades, actividadId);
     final actividades = _sinActividad(_tareas[idx].actividades, actividadId);
     _tareas[idx] = _tareas[idx].copyWith(actividades: actividades);
     _recalcularBloqueoPorSubtareas(tareaId);
+    if (actual != null) {
+      _registrarHistorial(
+        tareaId,
+        'Eliminó la subtarea "${actual.descripcion}"',
+      );
+    }
   }
 
   @override
@@ -564,6 +787,7 @@ class InMemoryKanbanRepository implements KanbanRepository {
   }) async {
     await _latencia();
     final idx = _indice(tareaId);
+    final actual = _buscarActividad(_tareas[idx].actividades, actividadId);
     final actividades = _conActividadTransformada(
       _tareas[idx].actividades,
       actividadId,
@@ -571,6 +795,30 @@ class InMemoryKanbanRepository implements KanbanRepository {
     );
     _tareas[idx] = _tareas[idx].copyWith(actividades: actividades);
     _recalcularBloqueoPorSubtareas(tareaId);
+    if (actual == null) return;
+    if (miembroId == null && departamento == null) {
+      _registrarHistorial(
+        tareaId,
+        'Quitó el responsable de "${actual.descripcion}"',
+      );
+    } else {
+      final nombre =
+          departamento ??
+          _miembros
+              .firstWhere(
+                (m) => m.id == miembroId,
+                orElse: () => const Miembro(
+                  id: -1,
+                  nombre: 'alguien',
+                  colorAvatar: Colors.transparent,
+                ),
+              )
+              .nombre;
+      _registrarHistorial(
+        tareaId,
+        'Asignó a $nombre como responsable de "${actual.descripcion}"',
+      );
+    }
   }
 
   /// Recorre el árbol de [lista] buscando la actividad con [id] y devuelve
@@ -658,6 +906,10 @@ class InMemoryKanbanRepository implements KanbanRepository {
         pausadaPorSubtarea: true,
         estatusAntesDePausa: t.estatus,
       );
+      _registrarHistorial(
+        tareaId,
+        'Se pausó automáticamente por una subtarea sin resolver',
+      );
     } else if (!bloqueada &&
         t.pausadaPorSubtarea &&
         t.estatus == TareaEstatus.pausa) {
@@ -666,6 +918,7 @@ class InMemoryKanbanRepository implements KanbanRepository {
         pausadaPorSubtarea: false,
         limpiarEstatusAntesDePausa: true,
       );
+      _registrarHistorial(tareaId, 'Se reanudó automáticamente');
     }
   }
 
@@ -691,6 +944,7 @@ class InMemoryKanbanRepository implements KanbanRepository {
       ),
     ];
     _tareas[idx] = _tareas[idx].copyWith(comentarios: comentarios);
+    _registrarHistorial(tareaId, 'Agregó un comentario');
   }
 
   @override
@@ -700,7 +954,10 @@ class InMemoryKanbanRepository implements KanbanRepository {
   }
 
   @override
-  Future<void> renombrarColumna(TareaEstatus estatus, String nuevoTitulo) async {
+  Future<void> renombrarColumna(
+    TareaEstatus estatus,
+    String nuevoTitulo,
+  ) async {
     await _latencia();
     final idx = _columnas.indexWhere((c) => c.estatus == estatus);
     if (idx == -1) return;
@@ -724,6 +981,20 @@ class InMemoryKanbanRepository implements KanbanRepository {
     _columnas
       ..clear()
       ..addAll(nuevoOrden.map((e) => porEstatus[e]).whereType<KanbanColumna>());
+  }
+
+  @override
+  Future<void> actualizarLimiteWipColumna(
+    TareaEstatus estatus,
+    int? limite,
+  ) async {
+    await _latencia();
+    final idx = _columnas.indexWhere((c) => c.estatus == estatus);
+    if (idx == -1) return;
+    _columnas[idx] = _columnas[idx].copyWith(
+      limiteWip: limite,
+      limpiarLimiteWip: limite == null,
+    );
   }
 
   @override

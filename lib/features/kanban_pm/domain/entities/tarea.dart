@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../kanban_constants.dart';
 import 'actividad.dart';
 import 'comentario.dart';
+import 'historial_evento.dart';
 
 /// Tarea del tablero Kanban.
 class Tarea {
@@ -60,6 +61,11 @@ class Tarea {
   /// si nunca ha sido auto-pausada.
   final TareaEstatus? estatusAntesDePausa;
 
+  /// Bitácora de eventos de la tarea (cambios de estatus, asignaciones,
+  /// comentarios, subtareas…), más reciente al final — la registra sola el
+  /// repositorio, nunca se edita a mano.
+  final List<HistorialEvento> historial;
+
   const Tarea({
     required this.id,
     required this.titulo,
@@ -85,6 +91,7 @@ class Tarea {
     this.archivada = false,
     this.pausadaPorSubtarea = false,
     this.estatusAntesDePausa,
+    this.historial = const [],
   });
 
   int get actividadesTerminadas =>
@@ -132,6 +139,7 @@ class Tarea {
     bool? pausadaPorSubtarea,
     TareaEstatus? estatusAntesDePausa,
     bool limpiarEstatusAntesDePausa = false,
+    List<HistorialEvento>? historial,
   }) {
     return Tarea(
       id: id ?? this.id,
@@ -160,6 +168,7 @@ class Tarea {
       estatusAntesDePausa: limpiarEstatusAntesDePausa
           ? null
           : (estatusAntesDePausa ?? this.estatusAntesDePausa),
+      historial: historial ?? this.historial,
     );
   }
 }
