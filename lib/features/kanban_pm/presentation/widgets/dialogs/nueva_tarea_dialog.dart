@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import '../../kanban_constants.dart';
-import '../../data/kanban_repository.dart';
-import '../../domain/entities/actividad.dart';
-import '../../domain/entities/miembro.dart';
-import '../../domain/entities/tarea.dart';
-import '../../domain/entities/tarea_plantilla.dart';
+import '../../../kanban_constants.dart';
+import '../../../data/kanban_repository.dart';
+import '../../../domain/entities/actividad.dart';
+import '../../../domain/entities/miembro.dart';
+import '../../../domain/entities/tarea.dart';
+import '../../../domain/entities/tarea_plantilla.dart';
 
 /// Diálogo para crear una nueva tarea. Si se le pasa [plantilla], precarga
 /// título sugerido/descripción/prioridad/área/checklist de esa plantilla —
@@ -56,12 +56,16 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
   late final Set<int> _miembroIdsSeleccionados = {
     ...?widget.plantilla?.miembroIds,
   };
-  late String? _grupo = (widget.plantilla?.grupo.isNotEmpty ?? false)
+  // `_grupo`/`_estatus` ya no se eligen en este formulario (ver comentario
+  // más abajo en `build`), pero siguen determinando con qué área/columna
+  // se crea la tarjeta: heredado de la plantilla o, sin plantilla, vacío /
+  // la primera columna del tablero.
+  late final String? _grupo = (widget.plantilla?.grupo.isNotEmpty ?? false)
       ? widget.plantilla!.grupo
       : null;
   late TareaPrioridad _prioridad =
       widget.plantilla?.prioridad ?? TareaPrioridad.media;
-  late TareaEstatus _estatus = widget.columnas.isNotEmpty
+  late final TareaEstatus _estatus = widget.columnas.isNotEmpty
       ? widget.columnas.first.estatus
       : TareaEstatus.tareas;
   DateTime? _fechaVencimiento;
@@ -86,6 +90,40 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
 
   Future<void> _crear() async {
     if (_tituloCtrl.text.trim().isEmpty) return;
+    // Sin este chequeo, crear una tarjeta nueva directo en una columna con
+    // límite de WIP (p. ej. Proceso, límite 1) era la única de las 4 formas
+    // de llegar a esa columna que no respetaba el límite — arrastrar,
+    // mover en lote y "Iniciar/Reabrir" del detalle ya lo bloqueaban.
+    KanbanColumna? columna;
+    for (final c in widget.columnas) {
+      if (c.estatus == _estatus) {
+        columna = c;
+        break;
+      }
+    }
+    final limite = columna?.limiteWip;
+    if (limite != null) {
+      final todas = await widget.repository.listarTareas();
+      final ocupadas = todas
+          .where((t) => !t.archivada && t.estatus == _estatus)
+          .length;
+      if (ocupadas >= limite) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Ya hay ${ocupadas == 1 ? 'una tarjeta' : '$ocupadas tarjetas'} '
+                'en "${columna!.titulo}" (límite $limite). Elige otra '
+                'columna o créala y muévela después.',
+              ),
+              backgroundColor: KanbanColors.danger,
+            ),
+          );
+        }
+        return;
+      }
+    }
+    if (!mounted) return;
     setState(() => _guardando = true);
     try {
       final id = await widget.repository.crearTarea(
@@ -243,29 +281,12 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
                     ],
                   ),
                   const SizedBox(height: 10),
+                  // Área y Columna ya no se piden aquí: toda tarea nueva
+                  // entra a la primera columna del tablero (ver `_estatus`)
+                  // y sin área asignada — moverla a otra columna o asignarle
+                  // un área se hace después, desde la tarjeta ya creada.
                   Row(
                     children: [
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          initialValue: _grupo,
-                          decoration: _decoracion('Área'),
-                          items: [
-                            for (final g in kGruposDemo)
-                              DropdownMenuItem(
-                                value: g,
-                                child: Text(
-                                  g,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: KanbanColors.texto,
-                                  ),
-                                ),
-                              ),
-                          ],
-                          onChanged: (v) => setState(() => _grupo = v),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
                       Expanded(
                         child: DropdownButtonFormField<TareaPrioridad>(
                           initialValue: _prioridad,
@@ -285,33 +306,6 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
                           ],
                           onChanged: (v) => setState(
                             () => _prioridad = v ?? TareaPrioridad.media,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<TareaEstatus>(
-                          initialValue: _estatus,
-                          decoration: _decoracion('Columna'),
-                          items: [
-                            for (final c in widget.columnas)
-                              DropdownMenuItem(
-                                value: c.estatus,
-                                child: Text(
-                                  c.titulo,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: KanbanColors.texto,
-                                  ),
-                                ),
-                              ),
-                          ],
-                          onChanged: (v) => setState(
-                            () => _estatus = v ?? TareaEstatus.tareas,
                           ),
                         ),
                       ),

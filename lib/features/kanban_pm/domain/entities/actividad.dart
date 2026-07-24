@@ -17,6 +17,12 @@ class Actividad {
   /// con [miembroId].
   final String? departamento;
 
+  /// Fecha y hora planeadas de inicio/fin de esta subtarea — se piden al
+  /// asignar el responsable (ver [conResponsable]), igual que una tarea
+  /// completa tiene su propia fecha de inicio/vencimiento.
+  final DateTime? fechaInicio;
+  final DateTime? fechaFin;
+
   /// Subtareas de esta subtarea, delegadas por su responsable.
   final List<Actividad> subActividades;
 
@@ -26,6 +32,8 @@ class Actividad {
     this.terminada = false,
     this.miembroId,
     this.departamento,
+    this.fechaInicio,
+    this.fechaFin,
     this.subActividades = const [],
   });
 
@@ -43,21 +51,32 @@ class Actividad {
       terminada: terminada ?? this.terminada,
       miembroId: miembroId,
       departamento: departamento,
+      fechaInicio: fechaInicio,
+      fechaFin: fechaFin,
       subActividades: subActividades ?? this.subActividades,
     );
   }
 
   /// Reemplaza el responsable de esta subtarea (o lo limpia si ambos
-  /// argumentos vienen `null`) — aparte de [copyWith] porque asignar
-  /// persona/departamento es una sustitución completa, no un merge campo a
-  /// campo (elegir una limpia la otra).
-  Actividad conResponsable({int? miembroId, String? departamento}) {
+  /// argumentos vienen `null`) junto con sus fechas planeadas — aparte de
+  /// [copyWith] porque asignar persona/departamento es una sustitución
+  /// completa, no un merge campo a campo (elegir una limpia la otra, y
+  /// quitar el responsable también quita sus fechas: sin alguien
+  /// resolviéndola, esa fecha ya no significa nada).
+  Actividad conResponsable({
+    int? miembroId,
+    String? departamento,
+    DateTime? fechaInicio,
+    DateTime? fechaFin,
+  }) {
     return Actividad(
       id: id,
       descripcion: descripcion,
       terminada: terminada,
       miembroId: miembroId,
       departamento: departamento,
+      fechaInicio: fechaInicio,
+      fechaFin: fechaFin,
       subActividades: subActividades,
     );
   }

@@ -1,17 +1,17 @@
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
-import '../../kanban_constants.dart';
-import '../../data/kanban_repository.dart';
-import '../../domain/entities/actividad.dart';
-import '../../domain/entities/comentario.dart';
-import '../../domain/entities/miembro.dart';
-import '../../domain/entities/tarea.dart';
-import '../../domain/entities/tarea_etiqueta.dart';
-import 'adjunto_imagen.dart';
+import '../../../kanban_constants.dart';
+import '../../../data/kanban_repository.dart';
+import '../../../domain/entities/actividad.dart';
+import '../../../domain/entities/miembro.dart';
+import '../../../domain/entities/tarea.dart';
+import '../../../domain/entities/tarea_etiqueta.dart';
+import '../common/color_wheel_picker.dart';
+import 'actividad_fechas_dialog.dart';
+import 'pausar_tarea_dialog.dart';
 
 /// Diálogo de detalle/edición de una tarea: datos generales, las 3
-/// clasificaciones (Generales/Nivel/Importancia), checklist de actividades
-/// y comentarios — replica el diseño del panel de detalle de referencia.
+/// clasificaciones (Generales/Nivel/Importancia) y checklist de
+/// actividades — replica el diseño del panel de detalle de referencia.
 class TareaDetailDialog extends StatefulWidget {
   final KanbanRepository repository;
   final int tareaId;
@@ -49,7 +49,6 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
   final _tituloCtrl = TextEditingController();
   final _descripcionCtrl = TextEditingController();
   final _nuevaActividadCtrl = TextEditingController();
-  final _comentarioCtrl = TextEditingController();
   final _nuevaEtiquetaCtrl = TextEditingController();
   final _nuevoMiembroCtrl = TextEditingController();
 
@@ -63,7 +62,6 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
   bool _creandoActividad = false;
   bool _guardando = false;
 
-  List<Tarea> _todasTareas = [];
   List<TareaEtiqueta> _catalogoEtiquetas = [];
   Set<int> _etiquetaIdsSeleccionadas = {};
   List<Miembro> _catalogoMiembros = [];
@@ -74,8 +72,6 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
   Color _colorNuevaEtiqueta = kColorPaletteEtiquetas.first;
   bool _creandoMiembro = false;
   Color _colorNuevoMiembro = kColorPaletteEtiquetas.first;
-  final _imagePicker = ImagePicker();
-  XFile? _adjuntoPendiente;
 
   /// Id de la actividad bajo la que se está agregando una subtarea (`null`
   /// si ninguna, o si el composer visible es el de nivel raíz).
@@ -92,7 +88,6 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     _tituloCtrl.dispose();
     _descripcionCtrl.dispose();
     _nuevaActividadCtrl.dispose();
-    _comentarioCtrl.dispose();
     _nuevaEtiquetaCtrl.dispose();
     _nuevoMiembroCtrl.dispose();
     super.dispose();
@@ -111,7 +106,6 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     final t = tareas.firstWhere((x) => x.id == widget.tareaId);
     setState(() {
       _tarea = t;
-      _todasTareas = tareas;
       _catalogoEtiquetas = etiquetas;
       _catalogoMiembros = miembros;
       _tituloCtrl.text = t.titulo;
@@ -158,11 +152,17 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     );
     _nuevaEtiquetaCtrl.clear();
     if (!mounted) return;
+    // Mismo motivo que en `_crearMiembro`: agregar al catálogo local en vez
+    // de `_cargar()` para no perder ediciones sin guardar del resto del
+    // formulario.
     setState(() {
       _creandoEtiqueta = false;
+      _catalogoEtiquetas = [
+        ..._catalogoEtiquetas,
+        TareaEtiqueta(id: id, nombre: nombre, color: _colorNuevaEtiqueta),
+      ];
       _etiquetaIdsSeleccionadas.add(id);
     });
-    await _cargar();
   }
 
   void _toggleMiembro(int id) {
@@ -179,38 +179,162 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     final id = await widget.repository.crearMiembro(nombre, _colorNuevoMiembro);
     _nuevoMiembroCtrl.clear();
     if (!mounted) return;
+    // Agrega el miembro nuevo al catálogo local en vez de recargar con
+    // `_cargar()`: esa llamada re-lee la tarea del repositorio y pisa por
+    // completo el estado del formulario (título, fechas, la propia
+    // selección de miembros que se acaba de tocar…) con lo último guardado
+    // — como este diálogo no autoguarda campo por campo, eso borraba
+    // cualquier cambio sin persistir todavía con solo crear un miembro
+    // nuevo.
     setState(() {
       _creandoMiembro = false;
+      _catalogoMiembros = [
+        ..._catalogoMiembros,
+        Miembro(id: id, nombre: nombre, colorAvatar: _colorNuevoMiembro),
+      ];
       _miembroIdsSeleccionados.add(id);
     });
-    await _cargar();
   }
 
-  /// `true` si dejar que la tarea actual dependa de [candidatoId] cerraría
-  /// un ciclo (i.e. `candidatoId` ya depende — directa o transitivamente —
-  /// de la tarea actual).
-  bool _creariaCiclo(int candidatoId) {
-    final visitados = <int>{};
-    bool dfs(int actualId) {
-      if (actualId == _tarea!.id) return true;
-      if (!visitados.add(actualId)) return false;
-      final idx = _todasTareas.indexWhere((x) => x.id == actualId);
-      if (idx == -1) return false;
-      for (final depId in _todasTareas[idx].dependeDeIds) {
-        if (dfs(depId)) return true;
-      }
-      return false;
-    }
-
-    return dfs(candidatoId);
-  }
-
-  void _toggleDependencia(int id) {
-    setState(() {
-      if (!_dependeDeSeleccionadas.add(id)) {
-        _dependeDeSeleccionadas.remove(id);
-      }
-    });
+  /// Lista desplegable con el catálogo completo del tablero para marcar/
+  /// desmarcar miembros de la tarea, en vez de una fila de chips siempre
+  /// visible — el cambio queda en `_miembroIdsSeleccionados` (estado local
+  /// del formulario) y se persiste hasta que se presiona GUARDAR, igual
+  /// que el resto de los campos de este diálogo.
+  void _mostrarSelectorMiembros(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: KanbanColors.bg2,
+          surfaceTintColor: Colors.transparent,
+          title: Text('Miembros', style: TextStyle(color: KanbanColors.texto)),
+          content: SizedBox(
+            width: 300,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_catalogoMiembros.isNotEmpty)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 280),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (final m in _catalogoMiembros)
+                            CheckboxListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              activeColor: KanbanColors.accent,
+                              value: _miembroIdsSeleccionados.contains(m.id),
+                              secondary: CircleAvatar(
+                                radius: 12,
+                                backgroundColor: m.colorAvatar,
+                                child: Text(
+                                  m.nombre.isNotEmpty
+                                      ? m.nombre[0].toUpperCase()
+                                      : '?',
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                              title: Text(
+                                m.nombre,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: KanbanColors.texto,
+                                ),
+                              ),
+                              onChanged: (_) {
+                                _toggleMiembro(m.id);
+                                setDialogState(() {});
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 8),
+                if (_creandoMiembro) ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _nuevoMiembroCtrl,
+                          autofocus: true,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            color: KanbanColors.texto,
+                          ),
+                          decoration: _decoracion().copyWith(
+                            hintText: 'Nombre de la persona…',
+                          ),
+                          onSubmitted: (_) async {
+                            await _crearMiembro();
+                            setDialogState(() {});
+                          },
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          Icons.check_circle_rounded,
+                          color: KanbanColors.ok,
+                        ),
+                        onPressed: () async {
+                          await _crearMiembro();
+                          setDialogState(() {});
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  _botonColorRueda(
+                    color: _colorNuevoMiembro,
+                    onTap: () async {
+                      final elegido = await showColorWheelDialog(
+                        ctx,
+                        initial: _colorNuevoMiembro,
+                        titulo: 'Color del miembro',
+                      );
+                      if (elegido == null) return;
+                      setState(() => _colorNuevoMiembro = elegido);
+                      setDialogState(() {});
+                    },
+                  ),
+                ] else
+                  TextButton.icon(
+                    onPressed: () =>
+                        setDialogState(() => _creandoMiembro = true),
+                    icon: Icon(
+                      Icons.add_rounded,
+                      size: 16,
+                      color: KanbanColors.accent,
+                    ),
+                    label: Text(
+                      'Nuevo miembro',
+                      style: TextStyle(color: KanbanColors.accent),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                setState(() => _creandoMiembro = false);
+                Navigator.of(ctx).pop();
+              },
+              child: const Text('Cerrar'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _elegirFecha({required bool esInicio}) async {
@@ -255,6 +379,52 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
       case TareaEstatus.terminado:
       case TareaEstatus.revisado:
         nuevo = TareaEstatus.proceso;
+      default:
+        // Columna personalizada (ver `KanbanRepository.crearColumna`): no
+        // participa del flujo tareas→proceso→pausa→terminado/revisado, así
+        // que este botón simplemente la trae de vuelta a Proceso.
+        nuevo = TareaEstatus.proceso;
+    }
+    if (nuevo != t.estatus) {
+      final columnas = await widget.repository.listarColumnas();
+      KanbanColumna? columna;
+      for (final c in columnas) {
+        if (c.estatus == nuevo) {
+          columna = c;
+          break;
+        }
+      }
+      final limite = columna?.limiteWip;
+      if (limite != null) {
+        final todas = await widget.repository.listarTareas();
+        final ocupadas = todas
+            .where((x) => x.id != t.id && x.estatus == nuevo)
+            .length;
+        if (ocupadas >= limite) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Ya hay ${ocupadas == 1 ? 'una tarjeta' : '$ocupadas tarjetas'} '
+                  'en "${columna!.titulo}" (límite $limite). Muévela antes '
+                  'de agregar otra.',
+                ),
+                backgroundColor: KanbanColors.danger,
+              ),
+            );
+          }
+          return;
+        }
+      }
+    }
+    if (!mounted) return;
+    if (nuevo == TareaEstatus.pausa) {
+      final continuar = await PausarTareaDialog.show(
+        context,
+        repository: widget.repository,
+        tarea: t,
+      );
+      if (!continuar || !mounted) return;
     }
     await widget.repository.moverTarea(t.id, nuevo);
     widget.onRefresh();
@@ -272,6 +442,8 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
       case TareaEstatus.terminado:
       case TareaEstatus.revisado:
         return 'Reabrir';
+      default:
+        return 'Mover a Proceso';
     }
   }
 
@@ -367,73 +539,31 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     int? miembroId,
     String? departamento,
   }) async {
+    // Solo se piden fechas cuando de verdad se está asignando a alguien —
+    // quitar el responsable (ambos `null`) no necesita preguntar nada.
+    DateTime? fechaInicio;
+    DateTime? fechaFin;
+    if (miembroId != null || departamento != null) {
+      final actual = _buscarActividad(_tarea?.actividades ?? [], actividadId);
+      final fechas = await ActividadFechasDialog.show(
+        context,
+        inicioInicial: actual?.fechaInicio,
+        finInicial: actual?.fechaFin,
+      );
+      if (fechas == null || !mounted) return;
+      fechaInicio = fechas.inicio;
+      fechaFin = fechas.fin;
+    }
     await widget.repository.asignarResponsableActividad(
       widget.tareaId,
       actividadId,
       miembroId: miembroId,
       departamento: departamento,
+      fechaInicio: fechaInicio,
+      fechaFin: fechaFin,
     );
     widget.onRefresh();
     await _cargar();
-  }
-
-  Future<void> _agregarComentario() async {
-    final texto = _comentarioCtrl.text.trim();
-    final adjunto = _adjuntoPendiente;
-    if (texto.isEmpty && adjunto == null) return;
-    _comentarioCtrl.clear();
-    setState(() => _adjuntoPendiente = null);
-    await widget.repository.agregarComentario(
-      widget.tareaId,
-      'Yo',
-      texto,
-      adjuntoPath: adjunto?.path,
-      adjuntoNombre: adjunto?.name,
-    );
-    widget.onRefresh();
-    await _cargar();
-  }
-
-  void _verAdjunto(Comentario c) {
-    showDialog(
-      context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.all(24),
-        child: GestureDetector(
-          onTap: () => Navigator.of(ctx).pop(),
-          child: InteractiveViewer(
-            child: AdjuntoImagen(
-              path: c.adjuntoPath!,
-              width: double.infinity,
-              height: double.infinity,
-              fit: BoxFit.contain,
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _elegirAdjunto() async {
-    try {
-      final archivo = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 1200,
-        imageQuality: 85,
-      );
-      if (archivo != null) setState(() => _adjuntoPendiente = archivo);
-    } catch (ex) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('No se pudo adjuntar el archivo: $ex'),
-            backgroundColor: KanbanColors.danger,
-          ),
-        );
-      }
-    }
   }
 
   Future<void> _eliminarTarea() async {
@@ -479,6 +609,33 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     final h12 = d.hour % 12 == 0 ? 12 : d.hour % 12;
     final periodo = d.hour < 12 ? 'a. m.' : 'p. m.';
     return '${h12.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')} $periodo';
+  }
+
+  /// Botón compacto que muestra el color actual y abre la rueda cromática
+  /// para cambiarlo — reemplaza las cuadrículas de colores fijos en
+  /// etiquetas/miembros/portada, que solo dejaban elegir entre lo
+  /// precargado.
+  Widget _botonColorRueda({required Color color, required VoidCallback onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 22,
+            height: 22,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              border: Border.all(color: KanbanColors.borde),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Icon(Icons.expand_more_rounded, size: 16, color: KanbanColors.tdim),
+        ],
+      ),
+    );
   }
 
   Widget _campoBox({required Widget child, required VoidCallback onTap}) {
@@ -625,6 +782,26 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     return null;
   }
 
+  String _rangoFechasActividad(Actividad a) {
+    String fmt(DateTime d) =>
+        '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')} '
+        '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    final ini = a.fechaInicio;
+    final fin = a.fechaFin;
+    if (ini != null && fin != null) return '${fmt(ini)} – ${fmt(fin)}';
+    if (ini != null) return 'Desde ${fmt(ini)}';
+    return 'Hasta ${fmt(fin!)}';
+  }
+
+  Actividad? _buscarActividad(List<Actividad> lista, int id) {
+    for (final a in lista) {
+      if (a.id == id) return a;
+      final enHijas = _buscarActividad(a.subActividades, id);
+      if (enHijas != null) return enHijas;
+    }
+    return null;
+  }
+
   /// Pill que muestra el responsable actual de [a] (persona, departamento o
   /// "Asignar" si no tiene) y, al tocarla, abre el menú para elegir uno
   /// nuevo o quitarlo.
@@ -652,6 +829,15 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
       onSelected: (v) {
         if (v == '_quitar') {
           _asignarResponsable(a.id);
+        } else if (v == '_editar_fechas') {
+          // Reasignar al mismo responsable ya activo, para que
+          // `_asignarResponsable` vuelva a pedir fechas (precargadas con
+          // las actuales) sin tocar quién es el responsable.
+          _asignarResponsable(
+            a.id,
+            miembroId: a.miembroId,
+            departamento: a.departamento,
+          );
         } else if (v.startsWith('m:')) {
           _asignarResponsable(a.id, miembroId: int.parse(v.substring(2)));
         } else if (v.startsWith('d:')) {
@@ -659,11 +845,16 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
         }
       },
       itemBuilder: (context) => [
-        if (a.tieneResponsable)
+        if (a.tieneResponsable) ...[
+          const PopupMenuItem(
+            value: '_editar_fechas',
+            child: Text('Editar fechas', style: TextStyle(fontSize: 12.5)),
+          ),
           const PopupMenuItem(
             value: '_quitar',
             child: Text('Quitar responsable', style: TextStyle(fontSize: 12.5)),
           ),
+        ],
         PopupMenuItem(
           enabled: false,
           height: 28,
@@ -789,6 +980,11 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     final hijasVisibles = a.subActividades.where(
       (h) => !_ocultarCompletados || !h.terminada,
     );
+    // Una actividad con subtareas funciona como una "lista": su estatus se
+    // deriva solo de ellas (ver `_conTerminadaDerivada` en el repositorio,
+    // que la recalcula en automático), así que aquí no se puede marcar a
+    // mano — solo las hojas (las "tareas" reales) tienen checkbox activo.
+    final esLista = a.subActividades.isNotEmpty;
     return Padding(
       padding: EdgeInsets.only(left: profundidad * 18.0),
       child: Column(
@@ -799,16 +995,54 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
               Checkbox(
                 value: a.terminada,
                 activeColor: KanbanColors.toolbarTeal,
-                onChanged: (_) => _toggleActividad(a.id),
+                onChanged: esLista ? null : (_) => _toggleActividad(a.id),
               ),
               Expanded(
-                child: Text(
-                  a.descripcion,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    color: a.terminada ? KanbanColors.tdim : KanbanColors.texto,
-                    decoration: a.terminada ? TextDecoration.lineThrough : null,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            a.descripcion,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: esLista
+                                  ? FontWeight.w700
+                                  : FontWeight.normal,
+                              color: a.terminada
+                                  ? KanbanColors.tdim
+                                  : KanbanColors.texto,
+                              decoration: a.terminada
+                                  ? TextDecoration.lineThrough
+                                  : null,
+                            ),
+                          ),
+                        ),
+                        if (esLista) ...[
+                          const SizedBox(width: 6),
+                          Text(
+                            '${a.subActividades.where((h) => h.terminada).length}/${a.subActividades.length}',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                              color: KanbanColors.tdim,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (a.fechaInicio != null || a.fechaFin != null)
+                      Text(
+                        _rangoFechasActividad(a),
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: KanbanColors.tdim,
+                        ),
+                      ),
+                  ],
                 ),
               ),
               _chipResponsable(a),
@@ -896,14 +1130,24 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                         ),
                         const SizedBox(width: 10),
                         Expanded(
-                          child: Text(
-                            t.titulo,
+                          // Editable directamente en el encabezado — antes
+                          // el título aparecía dos veces (aquí de solo
+                          // lectura y otra vez más abajo en un campo
+                          // editable), confuso porque parecían dos datos
+                          // distintos cuando eran el mismo.
+                          child: TextField(
+                            controller: _tituloCtrl,
                             style: TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.bold,
                               color: KanbanColors.texto,
                             ),
-                            overflow: TextOverflow.ellipsis,
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              isCollapsed: true,
+                              border: InputBorder.none,
+                              hintText: 'Título de la tarea',
+                            ),
                           ),
                         ),
                         IconButton(
@@ -950,6 +1194,34 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                               side: BorderSide(color: KanbanColors.toolbarTeal),
                             ),
                           ),
+                          // `fechaFinReal` no se borra al reabrir una tarea
+                          // (el repositorio conserva el primer sello como
+                          // historial), así que hace falta comprobar
+                          // también `t.cerrada` — si no, "Reabrir" dejaba
+                          // el aviso de "Terminado el…" pegado aunque la
+                          // tarjeta ya hubiera vuelto a Proceso/Pausa.
+                          if (t.fechaFinReal != null && t.cerrada) ...[
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.check_circle_rounded,
+                                  size: 14,
+                                  color: KanbanColors.ok,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Terminado el ${_fecha(t.fechaFinReal!)} '
+                                  'a las ${_hora(t.fechaFinReal!)}',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: KanbanColors.ok,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                           const SizedBox(height: 10),
                           Row(
                             children: [
@@ -998,16 +1270,6 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                 ),
                               ),
                             ],
-                          ),
-                          const SizedBox(height: 10),
-                          TextField(
-                            controller: _tituloCtrl,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: KanbanColors.texto,
-                            ),
-                            decoration: _decoracion(),
                           ),
                           const SizedBox(height: 16),
                           _seccionLabel('Etiquetas'),
@@ -1087,35 +1349,23 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                               ],
                             ),
                             const SizedBox(height: 6),
-                            Wrap(
-                              spacing: 6,
-                              children: [
-                                for (final c in kColorPaletteEtiquetas)
-                                  InkWell(
-                                    onTap: () =>
-                                        setState(() => _colorNuevaEtiqueta = c),
-                                    child: Container(
-                                      width: 22,
-                                      height: 22,
-                                      decoration: BoxDecoration(
-                                        color: c,
-                                        shape: BoxShape.circle,
-                                        border: _colorNuevaEtiqueta == c
-                                            ? Border.all(
-                                                color: KanbanColors.texto,
-                                                width: 2,
-                                              )
-                                            : null,
-                                      ),
-                                    ),
-                                  ),
-                              ],
+                            _botonColorRueda(
+                              color: _colorNuevaEtiqueta,
+                              onTap: () async {
+                                final elegido = await showColorWheelDialog(
+                                  context,
+                                  initial: _colorNuevaEtiqueta,
+                                  titulo: 'Color de la etiqueta',
+                                );
+                                if (elegido != null) {
+                                  setState(() => _colorNuevaEtiqueta = elegido);
+                                }
+                              },
                             ),
                           ],
                           const SizedBox(height: 16),
                           _seccionLabel('Portada'),
-                          Wrap(
-                            spacing: 6,
+                          Row(
                             children: [
                               InkWell(
                                 onTap: () => setState(() => _portada = null),
@@ -1139,24 +1389,20 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   ),
                                 ),
                               ),
-                              for (final c in kColorPaletteEtiquetas)
-                                InkWell(
-                                  onTap: () => setState(() => _portada = c),
-                                  child: Container(
-                                    width: 26,
-                                    height: 26,
-                                    decoration: BoxDecoration(
-                                      color: c,
-                                      shape: BoxShape.circle,
-                                      border: _portada == c
-                                          ? Border.all(
-                                              color: KanbanColors.texto,
-                                              width: 2,
-                                            )
-                                          : null,
-                                    ),
-                                  ),
-                                ),
+                              const SizedBox(width: 10),
+                              _botonColorRueda(
+                                color: _portada ?? KanbanColors.bg3,
+                                onTap: () async {
+                                  final elegido = await showColorWheelDialog(
+                                    context,
+                                    initial: _portada ?? KanbanColors.accent,
+                                    titulo: 'Color de portada',
+                                  );
+                                  if (elegido != null) {
+                                    setState(() => _portada = elegido);
+                                  }
+                                },
+                              ),
                             ],
                           ),
                           const SizedBox(height: 14),
@@ -1231,187 +1477,46 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                           ),
                           const SizedBox(height: 12),
                           _seccionLabel('Miembros'),
-                          Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              for (final m in _catalogoMiembros)
-                                FilterChip(
-                                  avatar: CircleAvatar(
-                                    backgroundColor: m.colorAvatar,
-                                    child: Text(
-                                      m.nombre.isNotEmpty
-                                          ? m.nombre[0].toUpperCase()
-                                          : '?',
-                                      style: const TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ),
-                                  label: Text(
-                                    m.nombre,
-                                    style: TextStyle(
-                                      fontSize: 11.5,
-                                      color: KanbanColors.texto,
-                                    ),
-                                  ),
-                                  selected: _miembroIdsSeleccionados.contains(
-                                    m.id,
-                                  ),
-                                  backgroundColor: KanbanColors.bg3,
-                                  selectedColor: m.colorAvatar.withValues(
-                                    alpha: 0.3,
-                                  ),
-                                  side: BorderSide(color: KanbanColors.borde),
-                                  onSelected: (_) => _toggleMiembro(m.id),
-                                ),
-                              ActionChip(
-                                avatar: Icon(
-                                  Icons.add_rounded,
-                                  size: 15,
-                                  color: KanbanColors.texto,
-                                ),
-                                label: Text(
-                                  'Nuevo',
-                                  style: TextStyle(
-                                    fontSize: 11.5,
-                                    color: KanbanColors.texto,
-                                  ),
-                                ),
-                                backgroundColor: KanbanColors.bg3,
-                                side: BorderSide(color: KanbanColors.borde),
-                                onPressed: () => setState(
-                                  () => _creandoMiembro = !_creandoMiembro,
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (_creandoMiembro) ...[
-                            const SizedBox(height: 8),
-                            Row(
+                          // Botón compacto en vez de chips siempre visibles
+                          // para todo el catálogo: con varios miembros en el
+                          // tablero, la fila de chips se volvía larga y
+                          // ocupaba espacio aunque casi nunca se tocara.
+                          _campoBox(
+                            onTap: () => _mostrarSelectorMiembros(context),
+                            child: Row(
                               children: [
                                 Expanded(
-                                  child: TextField(
-                                    controller: _nuevoMiembroCtrl,
-                                    autofocus: true,
+                                  child: Text(
+                                    _miembroIdsSeleccionados.isEmpty
+                                        ? 'Sin miembros asignados'
+                                        : _catalogoMiembros
+                                              .where(
+                                                (m) =>
+                                                    _miembroIdsSeleccionados
+                                                        .contains(m.id),
+                                              )
+                                              .map((m) => m.nombre)
+                                              .join(', '),
                                     style: TextStyle(
                                       fontSize: 12.5,
-                                      color: KanbanColors.texto,
+                                      color: _miembroIdsSeleccionados.isEmpty
+                                          ? KanbanColors.tdim
+                                          : KanbanColors.texto,
                                     ),
-                                    decoration: _decoracion().copyWith(
-                                      hintText: 'Nombre de la persona…',
-                                    ),
-                                    onSubmitted: (_) => _crearMiembro(),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
-                                IconButton(
-                                  icon: Icon(
-                                    Icons.check_circle_rounded,
-                                    color: KanbanColors.ok,
-                                  ),
-                                  onPressed: _crearMiembro,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            Wrap(
-                              spacing: 6,
-                              children: [
-                                for (final c in kColorPaletteEtiquetas)
-                                  InkWell(
-                                    onTap: () =>
-                                        setState(() => _colorNuevoMiembro = c),
-                                    child: Container(
-                                      width: 22,
-                                      height: 22,
-                                      decoration: BoxDecoration(
-                                        color: c,
-                                        shape: BoxShape.circle,
-                                        border: _colorNuevoMiembro == c
-                                            ? Border.all(
-                                                color: KanbanColors.texto,
-                                                width: 2,
-                                              )
-                                            : null,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ],
-                          const SizedBox(height: 14),
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.link_rounded,
-                                size: 15,
-                                color: KanbanColors.texto,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                'DEPENDE DE (${_dependeDeSeleccionadas.length})',
-                                style: TextStyle(
-                                  fontSize: 12.5,
-                                  fontWeight: FontWeight.bold,
-                                  color: KanbanColors.texto,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          if (_todasTareas.length <= 1)
-                            Padding(
-                              padding: EdgeInsets.only(bottom: 8),
-                              child: Text(
-                                'No hay otras tareas para relacionar.',
-                                style: TextStyle(
-                                  fontSize: 12,
+                                const SizedBox(width: 6),
+                                Icon(
+                                  Icons.expand_more_rounded,
+                                  size: 18,
                                   color: KanbanColors.tdim,
                                 ),
-                              ),
-                            )
-                          else
-                            for (final otra in _todasTareas.where(
-                              (x) => x.id != t.id,
-                            ))
-                              Builder(
-                                builder: (context) {
-                                  final seleccionada = _dependeDeSeleccionadas
-                                      .contains(otra.id);
-                                  final bloqueada =
-                                      !seleccionada && _creariaCiclo(otra.id);
-                                  return Opacity(
-                                    opacity: bloqueada ? 0.4 : 1,
-                                    child: Row(
-                                      children: [
-                                        Checkbox(
-                                          value: seleccionada,
-                                          activeColor: KanbanColors.toolbarTeal,
-                                          onChanged: bloqueada
-                                              ? null
-                                              : (_) =>
-                                                    _toggleDependencia(otra.id),
-                                        ),
-                                        Expanded(
-                                          child: Text(
-                                            bloqueada
-                                                ? '${otra.titulo} (crearía un ciclo)'
-                                                : otra.titulo,
-                                            style: const TextStyle(
-                                              fontSize: 12.5,
-                                            ),
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                              ),
-                          const SizedBox(height: 10),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 14),
                           Divider(color: KanbanColors.borde),
                           const SizedBox(height: 4),
                           if (t.actividades.isNotEmpty) ...[
@@ -1507,171 +1612,6 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                 ),
                               ),
                             ),
-                          const SizedBox(height: 16),
-                          Divider(color: KanbanColors.borde),
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.chat_bubble_outline_rounded,
-                                size: 15,
-                                color: KanbanColors.texto,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                'COMENTARIOS (${t.comentarios.length})',
-                                style: TextStyle(
-                                  fontSize: 12.5,
-                                  fontWeight: FontWeight.bold,
-                                  color: KanbanColors.texto,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          for (final c in t.comentarios)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: Container(
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: KanbanColors.bg3,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      c.autor,
-                                      style: TextStyle(
-                                        fontSize: 11.5,
-                                        fontWeight: FontWeight.bold,
-                                        color: KanbanColors.texto,
-                                      ),
-                                    ),
-                                    if (c.contenido.isNotEmpty) ...[
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        c.contenido,
-                                        style: TextStyle(
-                                          fontSize: 12.5,
-                                          color: KanbanColors.texto,
-                                        ),
-                                      ),
-                                    ],
-                                    if (c.adjuntoPath != null) ...[
-                                      const SizedBox(height: 6),
-                                      ClipRRect(
-                                        borderRadius: BorderRadius.circular(6),
-                                        child: InkWell(
-                                          onTap: () => _verAdjunto(c),
-                                          child: AdjuntoImagen(
-                                            path: c.adjuntoPath!,
-                                            width: 120,
-                                            height: 90,
-                                          ),
-                                        ),
-                                      ),
-                                      if (c.adjuntoNombre != null) ...[
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          c.adjuntoNombre!,
-                                          style: TextStyle(
-                                            fontSize: 10.5,
-                                            color: KanbanColors.tdim,
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ],
-                                ),
-                              ),
-                            ),
-                          if (_adjuntoPendiente != null)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: Row(
-                                children: [
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(6),
-                                    child: AdjuntoImagen(
-                                      path: _adjuntoPendiente!.path,
-                                      width: 44,
-                                      height: 44,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      _adjuntoPendiente!.name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 11.5,
-                                        color: KanbanColors.tdim,
-                                      ),
-                                    ),
-                                  ),
-                                  IconButton(
-                                    icon: Icon(
-                                      Icons.close_rounded,
-                                      size: 16,
-                                      color: KanbanColors.tdim,
-                                    ),
-                                    onPressed: () => setState(
-                                      () => _adjuntoPendiente = null,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          Container(
-                            decoration: BoxDecoration(
-                              border: Border.all(color: KanbanColors.borde),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            padding: const EdgeInsets.all(6),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: TextField(
-                                    controller: _comentarioCtrl,
-                                    onSubmitted: (_) => _agregarComentario(),
-                                    style: TextStyle(
-                                      fontSize: 12.5,
-                                      color: KanbanColors.texto,
-                                    ),
-                                    decoration: InputDecoration(
-                                      isDense: true,
-                                      hintText: 'Escribe un comentario…',
-                                      hintStyle: TextStyle(
-                                        color: KanbanColors.tdim,
-                                      ),
-                                      border: InputBorder.none,
-                                    ),
-                                  ),
-                                ),
-                                IconButton(
-                                  icon: Icon(
-                                    Icons.attach_file_rounded,
-                                    size: 18,
-                                    color: _adjuntoPendiente != null
-                                        ? KanbanColors.accent
-                                        : KanbanColors.tdim,
-                                  ),
-                                  tooltip: 'Adjuntar imagen',
-                                  onPressed: _elegirAdjunto,
-                                ),
-                                IconButton(
-                                  icon: Icon(
-                                    Icons.send_rounded,
-                                    size: 18,
-                                    color: KanbanColors.toolbarTeal,
-                                  ),
-                                  onPressed: _agregarComentario,
-                                ),
-                              ],
-                            ),
-                          ),
                           const SizedBox(height: 16),
                           Divider(color: KanbanColors.borde),
                           Theme(

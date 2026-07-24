@@ -5,16 +5,22 @@ import '../../../domain/entities/actividad.dart';
 import '../../../domain/entities/miembro.dart';
 import '../../../domain/entities/tarea.dart';
 
-/// Paleta validada (CVD-safe) para la dona de estatus. Distinta de los
-/// colores de encabezado de columna (que ya llevan ícono + texto propios):
-/// aquí el color ES la identidad, así que debe pasar los checks de la
-/// skill de dataviz. Ver `kanban_constants.dart` para los colores de columna.
-const Map<TareaEstatus, Color> _kColorGraficaEstatus = {
-  TareaEstatus.tareas: Color(0xFF6366F1),
-  TareaEstatus.proceso: Color(0xFF2196F3),
-  TareaEstatus.pausa: Color(0xFFFD7E14),
-  TareaEstatus.terminado: Color(0xFF17A2B8),
-  TareaEstatus.revisado: Color(0xFF28A745),
+/// Paleta validada (CVD-safe) para la dona de estatus, solo para las 5
+/// columnas fijas del flujo original — aquí el color ES la identidad, así
+/// que debe pasar los checks de la skill de dataviz. Llave por `.id`
+/// (String) en vez de por `TareaEstatus` directo: ese ya no es un `enum`
+/// (ver [TareaEstatus], ahora permite columnas personalizadas creadas en
+/// tiempo de ejecución) y una `const Map` no admite llaves de una clase
+/// con `==`/`hashCode` propios. Una columna personalizada no está en este
+/// mapa, así que usa directamente su propio `color` (ver
+/// [_graficaEstatus]) — no está validado CVD-safe, pero es el mismo color
+/// que ya se usa para identificarla en el resto del módulo.
+const Map<String, Color> _kColorGraficaEstatus = {
+  'tareas': Color(0xFF6366F1),
+  'proceso': Color(0xFF2196F3),
+  'pausa': Color(0xFFFD7E14),
+  'terminado': Color(0xFF17A2B8),
+  'revisado': Color(0xFF28A745),
 };
 
 const _kAnimDuracion = Duration(milliseconds: 450);
@@ -169,43 +175,39 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
         children: [
           _filtroRango(),
           const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              _statTile(
-                'Total de tareas',
-                total.toDouble(),
-                Icons.view_kanban_rounded,
-                KanbanColors.accent,
-              ),
-              _statTile(
-                'Completadas',
-                porcentaje,
-                Icons.check_circle_rounded,
-                KanbanColors.ok,
-                sufijo: '%',
-              ),
-              _statTile(
-                'En proceso',
-                enProceso.toDouble(),
-                Icons.autorenew_rounded,
-                const Color(0xFF2196F3),
-              ),
-              _statTile(
-                'Vencidas',
-                vencidas.toDouble(),
-                Icons.warning_rounded,
-                KanbanColors.danger,
-              ),
-              _statTile(
-                'Bloqueadas por subtarea',
-                bloqueadas.toDouble(),
-                Icons.pause_circle_outline_rounded,
-                const Color(0xFFFD7E14),
-              ),
-            ],
-          ),
+          _filaKpis([
+            _statTile(
+              'Total de tareas',
+              total.toDouble(),
+              Icons.view_kanban_rounded,
+              KanbanColors.accent,
+            ),
+            _statTile(
+              'Completadas',
+              porcentaje,
+              Icons.check_circle_rounded,
+              KanbanColors.ok,
+              sufijo: '%',
+            ),
+            _statTile(
+              'En proceso',
+              enProceso.toDouble(),
+              Icons.autorenew_rounded,
+              const Color(0xFF2196F3),
+            ),
+            _statTile(
+              'Vencidas',
+              vencidas.toDouble(),
+              Icons.warning_rounded,
+              KanbanColors.danger,
+            ),
+            _statTile(
+              'Bloqueadas por subtarea',
+              bloqueadas.toDouble(),
+              Icons.pause_circle_outline_rounded,
+              const Color(0xFFFD7E14),
+            ),
+          ]),
           const SizedBox(height: 20),
           LayoutBuilder(
             builder: (context, constraints) {
@@ -279,6 +281,51 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
     );
   }
 
+  /// Distribuye las tarjetas de KPI para llenar el ancho disponible en vez
+  /// de dejarlas en un ancho fijo (200px): antes, con `Wrap`, cualquier
+  /// pantalla más ancha que eso (todo el rango de móvil a escritorio)
+  /// terminaba con una franja de espacio muerto a la derecha de cada fila.
+  /// Aquí se calculan cuántas caben por fila según un ancho mínimo legible
+  /// y cada una se estira (`Expanded`) para repartirse el resto.
+  Widget _filaKpis(List<Widget> tarjetas) {
+    const espacio = 12.0;
+    const anchoMinimo = 170.0;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columnas = ((constraints.maxWidth + espacio) /
+                (anchoMinimo + espacio))
+            .floor()
+            .clamp(1, tarjetas.length);
+        final filas = <Widget>[];
+        for (var i = 0; i < tarjetas.length; i += columnas) {
+          // La última fila, si queda incompleta (p. ej. 5 tarjetas en
+          // columnas de a 2), reparte el ancho completo solo entre las que
+          // le tocaron en vez de dejar un hueco vacío donde iría la que
+          // falta.
+          final grupo = tarjetas.skip(i).take(columnas).toList();
+          filas.add(
+            Row(
+              children: [
+                for (var j = 0; j < grupo.length; j++) ...[
+                  if (j > 0) const SizedBox(width: espacio),
+                  Expanded(child: grupo[j]),
+                ],
+              ],
+            ),
+          );
+        }
+        return Column(
+          children: [
+            for (var i = 0; i < filas.length; i++) ...[
+              if (i > 0) const SizedBox(height: espacio),
+              filas[i],
+            ],
+          ],
+        );
+      },
+    );
+  }
+
   Widget _statTile(
     String label,
     double valor,
@@ -287,9 +334,8 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
     String sufijo = '',
   }) {
     return Container(
-      width: 200,
       padding: const EdgeInsets.all(16),
-      decoration: KanbanColors.cardDecoration(radius: 12),
+      decoration: KanbanColors.cardDecorationConFondo(radius: 12),
       child: Row(
         children: [
           Container(
@@ -339,7 +385,7 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
     return RepaintBoundary(
       child: Container(
         padding: const EdgeInsets.all(18),
-        decoration: KanbanColors.cardDecoration(radius: 12),
+        decoration: KanbanColors.cardDecorationConFondo(radius: 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -383,7 +429,7 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
                   if (conteos[col.estatus]! > 0)
                     PieChartSectionData(
                       value: conteos[col.estatus]!.toDouble(),
-                      color: _kColorGraficaEstatus[col.estatus],
+                      color: (_kColorGraficaEstatus[col.estatus.id] ?? col.color),
                       radius: 30,
                       title: '${conteos[col.estatus]}',
                       titleStyle: const TextStyle(
@@ -411,7 +457,7 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
                         width: 10,
                         height: 10,
                         decoration: BoxDecoration(
-                          color: _kColorGraficaEstatus[col.estatus],
+                          color: (_kColorGraficaEstatus[col.estatus.id] ?? col.color),
                           shape: BoxShape.circle,
                         ),
                       ),
@@ -462,6 +508,39 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
           maxY: maxY == 0 ? 1 : maxY + 1,
           gridData: const FlGridData(show: false),
           borderData: FlBorderData(show: false),
+          // A diferencia de la dona de estatus (que imprime el conteo
+          // dentro de cada rebanada), estas barras no tenían ningún número
+          // visible — solo se podían comparar alturas. El tooltip al tocar
+          // usa el mismo lenguaje que ya tiene el gráfico de Tendencia.
+          barTouchData: BarTouchData(
+            touchTooltipData: BarTouchTooltipData(
+              getTooltipColor: (_) => KanbanColors.bg3,
+              tooltipBorder: BorderSide(color: KanbanColors.borde),
+              tooltipBorderRadius: BorderRadius.circular(8),
+              getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                final p = TareaPrioridad.values[group.x.toInt()];
+                final cantidad = rod.toY.round();
+                return BarTooltipItem(
+                  '${p.etiqueta}\n',
+                  TextStyle(
+                    fontSize: 10.5,
+                    color: KanbanColors.tdim,
+                    fontWeight: FontWeight.normal,
+                  ),
+                  children: [
+                    TextSpan(
+                      text: '$cantidad ${cantidad == 1 ? 'tarea' : 'tareas'}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: KanbanColors.texto,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
           titlesData: FlTitlesData(
             topTitles: const AxisTitles(
               sideTitles: SideTitles(showTitles: false),
@@ -626,6 +705,16 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
 
     if (cerradas.isEmpty) return _sinDatos();
 
+    // Resumen agregado sobre *todas* las cerradas con ambas fechas, no
+    // solo las 6 que se listan abajo: antes había que leer tarea por
+    // tarea para hacerse una idea de qué tan bien se cumplen las fechas
+    // en general.
+    final aTiempo = cerradas.where((e) => e.retrasoDias <= 0).length;
+    final conRetraso = cerradas.length - aTiempo;
+    final promedio =
+        cerradas.map((e) => e.retrasoDias).reduce((a, b) => a + b) /
+        cerradas.length;
+
     final top = cerradas.take(6).toList();
     final maxAbs = top
         .map((e) => e.retrasoDias.abs())
@@ -635,6 +724,40 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Wrap(
+            spacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                '$aTiempo a tiempo',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: KanbanColors.ok,
+                ),
+              ),
+              Text('·', style: TextStyle(fontSize: 12, color: KanbanColors.tdim)),
+              Text(
+                '$conRetraso con retraso',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: conRetraso > 0
+                      ? KanbanColors.danger
+                      : KanbanColors.tdim,
+                ),
+              ),
+              Text('·', style: TextStyle(fontSize: 12, color: KanbanColors.tdim)),
+              Text(
+                'promedio ${promedio >= 0 ? '+' : ''}'
+                '${promedio.toStringAsFixed(1)}d',
+                style: TextStyle(fontSize: 12, color: KanbanColors.tdim),
+              ),
+            ],
+          ),
+        ),
         for (final e in top)
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
@@ -907,6 +1030,15 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
     ].fold<int>(0, (a, b) => a > b ? a : b).toDouble();
     if (maxY == 0) return _sinDatos();
 
+    // Sin `interval` explícito, fl_chart calcula el suyo propio para el
+    // texto de los ejes por su cuenta, distinto del de las líneas de la
+    // rejilla (`horizontalInterval`) y sin noción de que el eje X son 8
+    // semanas discretas: en vez de una marca por línea/semana, terminaba
+    // llamando a `getTitlesWidget` en pasos fraccionarios, y como el texto
+    // trunca con `.toInt()`, se veían números y fechas repetidos varias
+    // veces seguidas (más notorio en el eje X mientras más ancho el
+    // gráfico). Ambos ejes ahora comparten el mismo paso que las líneas.
+    final double intervaloY = ((maxY + 1) / 4).clamp(1, double.infinity).toDouble();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -929,7 +1061,7 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
               gridData: FlGridData(
                 show: true,
                 drawVerticalLine: false,
-                horizontalInterval: ((maxY + 1) / 4).clamp(1, double.infinity),
+                horizontalInterval: intervaloY,
                 getDrawingHorizontalLine: (v) => FlLine(
                   color: KanbanColors.borde,
                   strokeWidth: 1,
@@ -978,6 +1110,7 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
                   sideTitles: SideTitles(
                     showTitles: true,
                     reservedSize: 26,
+                    interval: intervaloY,
                     getTitlesWidget: (v, meta) => Text(
                       '${v.toInt()}',
                       style: TextStyle(fontSize: 10, color: KanbanColors.tdim),
@@ -988,6 +1121,7 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
                   sideTitles: SideTitles(
                     showTitles: true,
                     reservedSize: 26,
+                    interval: 1,
                     getTitlesWidget: (v, meta) {
                       final i = v.toInt();
                       if (i < 0 || i >= inicios.length) {

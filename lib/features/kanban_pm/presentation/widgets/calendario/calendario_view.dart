@@ -9,7 +9,7 @@ import '../../../domain/entities/tarea.dart';
 import '../../../kanban_constants.dart';
 import '../csv_export/csv_utils.dart';
 import '../csv_export/descargar_csv.dart';
-import '../kanban_column.dart' show direccionAutoscroll;
+import '../kanban_board/kanban_column.dart' show direccionAutoscroll;
 import 'gantt_bar.dart';
 import 'gantt_connectors_painter.dart';
 import 'gantt_critical_path.dart';
@@ -33,7 +33,7 @@ const List<String> _kMeses = [
 /// Vista "Gantt": cronograma con barras arrastrables/redimensionables y
 /// líneas de dependencia entre tareas — sin paquetes externos, solo
 /// widgets propios + `CustomPainter`.
-class KanbanGanttView extends StatefulWidget {
+class CalendarioView extends StatefulWidget {
   final List<Tarea> tareas;
   final List<KanbanColumna> columnas;
   final KanbanRepository repository;
@@ -47,7 +47,7 @@ class KanbanGanttView extends StatefulWidget {
   final GanttZoom zoomInicial;
   final ValueChanged<GanttZoom>? onZoomCambiado;
 
-  const KanbanGanttView({
+  const CalendarioView({
     super.key,
     required this.tareas,
     required this.columnas,
@@ -59,10 +59,10 @@ class KanbanGanttView extends StatefulWidget {
   });
 
   @override
-  State<KanbanGanttView> createState() => _KanbanGanttViewState();
+  State<CalendarioView> createState() => _CalendarioViewState();
 }
 
-class _KanbanGanttViewState extends State<KanbanGanttView> {
+class _CalendarioViewState extends State<CalendarioView> {
   final _hCtrlHeader = ScrollController();
   final _hCtrlBody = ScrollController(); // bloque "Planeado"
   final _hCtrlBodyReal = ScrollController(); // bloque "Real"
@@ -938,7 +938,7 @@ class _KanbanGanttViewState extends State<KanbanGanttView> {
             child: Center(
               child: Text(
                 layoutNominal.sinFechas.isEmpty
-                    ? 'No hay tareas para mostrar en el Gantt.'
+                    ? 'No hay tareas para mostrar en el calendario.'
                     : 'Ninguna tarjeta tiene fecha de inicio y vencimiento aún.',
                 style: TextStyle(fontSize: 13, color: KanbanColors.tdim),
               ),

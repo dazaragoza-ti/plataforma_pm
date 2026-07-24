@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import '../../kanban_constants.dart';
-import '../../data/kanban_repository.dart';
-import '../../domain/entities/miembro.dart';
-import '../../domain/entities/tarea_etiqueta.dart';
-import '../../domain/entities/tarea_plantilla.dart';
+import '../../../kanban_constants.dart';
+import '../../../data/kanban_repository.dart';
+import '../../../domain/entities/miembro.dart';
+import '../../../domain/entities/tarea_etiqueta.dart';
+import '../../../domain/entities/tarea_plantilla.dart';
+import '../common/color_wheel_picker.dart';
 
 /// Diálogo de plantillas: lista las existentes (crear tarjeta / editar /
 /// eliminar) y permite crear nuevas. Al elegir "Usar" se cierra devolviendo
@@ -627,8 +628,7 @@ class _PlantillaFormDialogState extends State<_PlantillaFormDialog> {
                   ),
                 const SizedBox(height: 14),
                 _seccionLabel('Color de portada'),
-                Wrap(
-                  spacing: 6,
+                Row(
                   children: [
                     InkWell(
                       onTap: () => setState(() => _portada = null),
@@ -652,24 +652,12 @@ class _PlantillaFormDialogState extends State<_PlantillaFormDialog> {
                         ),
                       ),
                     ),
-                    for (final c in kColorPaletteEtiquetas)
-                      InkWell(
-                        onTap: () => setState(() => _portada = c),
-                        child: Container(
-                          width: 26,
-                          height: 26,
-                          decoration: BoxDecoration(
-                            color: c,
-                            shape: BoxShape.circle,
-                            border: _portada == c
-                                ? Border.all(
-                                    color: KanbanColors.texto,
-                                    width: 2,
-                                  )
-                                : null,
-                          ),
-                        ),
-                      ),
+                    const SizedBox(width: 10),
+                    ColorWheelTriggerButton(
+                      color: _portada ?? KanbanColors.bg3,
+                      titulo: 'Color de portada',
+                      onChanged: (c) => setState(() => _portada = c),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 14),

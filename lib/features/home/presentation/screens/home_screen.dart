@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../widgets/bubble_button.dart';
 import '../../domain/entities/bubble_menu_item.dart';
 import '../../../bitacora_pintura/presentation/screens/bitacora_dashboard_screen.dart';
-import '../../../kanban_pm/presentation/screens/kanban_dashboard_screen.dart';
+import '../../../kanban_pm/presentation/screens/workspace_selector_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -78,7 +78,7 @@ class _HomeScreenState extends State<HomeScreen> {
         icon: Icons.view_kanban_rounded,
         color: const Color(0xFFFFA726),
         onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const KanbanDashboardScreen()),
+          MaterialPageRoute(builder: (_) => const WorkspaceSelectorScreen()),
         ),
       ),
       BubbleMenuItem(

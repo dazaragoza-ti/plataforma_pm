@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../../kanban_constants.dart';
-import '../../domain/entities/miembro.dart';
+import '../../../kanban_constants.dart';
+import '../../../domain/entities/miembro.dart';
 
 /// Avatares superpuestos de los miembros asignados a una tarea, con una
 /// burbuja "+N" si hay más de [maxVisible] — mismo widget usado por la

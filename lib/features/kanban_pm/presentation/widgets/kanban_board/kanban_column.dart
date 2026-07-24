@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import '../../kanban_constants.dart';
-import '../../domain/entities/miembro.dart';
-import '../../domain/entities/tarea.dart';
-import '../../domain/entities/tarea_etiqueta.dart';
+import '../../../kanban_constants.dart';
+import '../../../domain/entities/miembro.dart';
+import '../../../domain/entities/tarea.dart';
+import '../../../domain/entities/tarea_etiqueta.dart';
 import 'kanban_task_card.dart';
 
 /// Dirección de autoscroll (-1, 1 ó `null`) según qué tan cerca está
@@ -30,6 +30,12 @@ double? direccionAutoscroll({
 class KanbanColumnView extends StatefulWidget {
   final KanbanColumna columna;
   final List<Tarea> tareas;
+  /// Ancho de la columna. En desktop es un valor fijo cómodo para varias
+  /// columnas visibles a la vez; en móvil el llamador pasa un ancho cercano
+  /// al de la pantalla (con un "peek" de la siguiente columna) para que el
+  /// tablero se sienta de "una columna a la vez, desliza para la próxima"
+  /// en vez de mostrar apenas una tira de cada una.
+  final double ancho;
   final Map<int, TareaEtiqueta> etiquetasPorId;
   final Map<int, Miembro> miembrosPorId;
   final void Function(Tarea tarea) onTapTarea;
@@ -39,7 +45,6 @@ class KanbanColumnView extends StatefulWidget {
   final VoidCallback onArchivarColumna;
   final VoidCallback? onMoverIzquierda;
   final VoidCallback? onMoverDerecha;
-  final void Function(String titulo) onCrearRapida;
   final void Function(Tarea tarea) onArchivarTarjeta;
   final void Function(Tarea tarea) onEliminarTarjeta;
   final void Function(Offset globalPos)? onArrastreGlobalHorizontal;
@@ -49,6 +54,7 @@ class KanbanColumnView extends StatefulWidget {
     super.key,
     required this.columna,
     required this.tareas,
+    this.ancho = 280,
     this.etiquetasPorId = const {},
     this.miembrosPorId = const {},
     required this.onTapTarea,
@@ -57,7 +63,6 @@ class KanbanColumnView extends StatefulWidget {
     required this.onArchivarColumna,
     this.onMoverIzquierda,
     this.onMoverDerecha,
-    required this.onCrearRapida,
     required this.onArchivarTarjeta,
     required this.onEliminarTarjeta,
     this.onArrastreGlobalHorizontal,
@@ -71,9 +76,7 @@ class KanbanColumnView extends StatefulWidget {
 class _KanbanColumnViewState extends State<KanbanColumnView> {
   final _scrollCtrl = ScrollController();
   final _tituloCtrl = TextEditingController();
-  final _nuevaTarjetaCtrl = TextEditingController();
   bool _editandoTitulo = false;
-  bool _creandoTarjeta = false;
   Timer? _autoscrollTimer;
   double? _autoscrollDireccion;
 
@@ -81,7 +84,6 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
   void dispose() {
     _scrollCtrl.dispose();
     _tituloCtrl.dispose();
-    _nuevaTarjetaCtrl.dispose();
     _autoscrollTimer?.cancel();
     super.dispose();
   }
@@ -141,15 +143,6 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
     if (confirmado == true) {
       widget.onCambiarLimiteWip?.call(int.tryParse(ctrl.text.trim()));
     }
-  }
-
-  void _confirmarNuevaTarjeta() {
-    final titulo = _nuevaTarjetaCtrl.text.trim();
-    if (titulo.isNotEmpty) {
-      widget.onCrearRapida(titulo);
-      _nuevaTarjetaCtrl.clear();
-    }
-    setState(() => _creandoTarjeta = false);
   }
 
   void _manejarAutoscroll(Offset globalPos, Rect areaVisible) {
@@ -274,6 +267,56 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
     );
   }
 
+  /// Título de la columna arrastrable para reordenar listas completas. En
+  /// móvil se usa `LongPressDraggable` en vez de `Draggable`: si el swipe
+  /// para deslizar entre columnas (ver [KanbanColumnView.ancho]) empieza
+  /// justo sobre el título, un `Draggable` normal le gana la primicia del
+  /// gesto al scroll horizontal del tablero y "secuestra" el swipe para
+  /// arrastrar la columna entera. En desktop se deja el `Draggable`
+  /// normal, que parte de un click+mantener del mouse sin ese conflicto.
+  Widget _tituloArrastrable() {
+    final feedback = Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: KanbanColors.bg2,
+          borderRadius: BorderRadius.circular(6),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.15),
+              blurRadius: 6,
+            ),
+          ],
+        ),
+        child: Text(
+          widget.columna.titulo,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+            color: KanbanColors.texto,
+          ),
+        ),
+      ),
+    );
+    final childWhenDragging = Opacity(opacity: 0.3, child: _filaTitulo());
+    final child = InkWell(onTap: _iniciarEdicionTitulo, child: _filaTitulo());
+    final esMovil = MediaQuery.sizeOf(context).width < 600;
+    return esMovil
+        ? LongPressDraggable<KanbanColumna>(
+            data: widget.columna,
+            feedback: feedback,
+            childWhenDragging: childWhenDragging,
+            child: child,
+          )
+        : Draggable<KanbanColumna>(
+            data: widget.columna,
+            feedback: feedback,
+            childWhenDragging: childWhenDragging,
+            child: child,
+          );
+  }
+
   Widget _header() {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 16, 10, 12),
@@ -318,44 +361,7 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
                     onSubmitted: (_) => _confirmarTitulo(),
                     onTapOutside: (_) => _confirmarTitulo(),
                   )
-                : Draggable<KanbanColumna>(
-                    data: widget.columna,
-                    feedback: Material(
-                      color: Colors.transparent,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: KanbanColors.bg2,
-                          borderRadius: BorderRadius.circular(6),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.15),
-                              blurRadius: 6,
-                            ),
-                          ],
-                        ),
-                        child: Text(
-                          widget.columna.titulo,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: KanbanColors.texto,
-                          ),
-                        ),
-                      ),
-                    ),
-                    childWhenDragging: Opacity(
-                      opacity: 0.3,
-                      child: _filaTitulo(),
-                    ),
-                    child: InkWell(
-                      onTap: _iniciarEdicionTitulo,
-                      child: _filaTitulo(),
-                    ),
-                  ),
+                : _tituloArrastrable(),
           ),
           PopupMenuButton<String>(
             tooltip: 'Menú de la lista',
@@ -418,95 +424,13 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
     );
   }
 
-  Widget _footer() {
-    if (_creandoTarjeta) {
-      return Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: _nuevaTarjetaCtrl,
-              autofocus: true,
-              maxLines: 2,
-              minLines: 1,
-              style: TextStyle(fontSize: 12.5, color: KanbanColors.texto),
-              decoration: InputDecoration(
-                isDense: true,
-                filled: true,
-                fillColor: KanbanColors.bg2,
-                hintText: 'Título de la tarjeta…',
-                hintStyle: TextStyle(color: KanbanColors.tdim),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide(color: KanbanColors.borde),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide(color: KanbanColors.accent),
-                ),
-              ),
-              onSubmitted: (_) => _confirmarNuevaTarjeta(),
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                ElevatedButton(
-                  onPressed: _confirmarNuevaTarjeta,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: KanbanColors.toolbarGreen,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                  ),
-                  child: const Text(
-                    'Añadir',
-                    style: TextStyle(fontSize: 12, color: Colors.white),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close_rounded, size: 18),
-                  onPressed: () => setState(() {
-                    _creandoTarjeta = false;
-                    _nuevaTarjetaCtrl.clear();
-                  }),
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
-    }
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: () => setState(() => _creandoTarjeta = true),
-        child: Padding(
-          padding: EdgeInsets.symmetric(vertical: 9, horizontal: 8),
-          child: Row(
-            children: [
-              Icon(Icons.add_rounded, size: 17, color: KanbanColors.tdim),
-              SizedBox(width: 6),
-              Text(
-                'Añadir tarjeta',
-                style: TextStyle(fontSize: 13, color: KanbanColors.tdim),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 280,
+      width: widget.ancho,
       margin: const EdgeInsets.only(right: 14),
       decoration: BoxDecoration(
-        color: KanbanColors.bg3,
+        color: KanbanColors.bg3ConFondo,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: _wipExcedido ? KanbanColors.danger : KanbanColors.borde,
@@ -553,13 +477,13 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
                       onTapTarea: widget.onTapTarea,
                       onArchivarTarjeta: widget.onArchivarTarjeta,
                       onEliminarTarjeta: widget.onEliminarTarjeta,
+                      onArrastreHorizontal: widget.onArrastreGlobalHorizontal,
                     ),
                   ],
                 );
               },
             ),
           ),
-          _footer(),
         ],
       ),
     );
@@ -585,6 +509,7 @@ class _ListaTarjetas extends StatelessWidget {
   final void Function(Tarea tarea) onTapTarea;
   final void Function(Tarea tarea) onArchivarTarjeta;
   final void Function(Tarea tarea) onEliminarTarjeta;
+  final void Function(Offset globalPos)? onArrastreHorizontal;
 
   const _ListaTarjetas({
     required this.scrollController,
@@ -595,9 +520,10 @@ class _ListaTarjetas extends StatelessWidget {
     required this.onTapTarea,
     required this.onArchivarTarjeta,
     required this.onEliminarTarjeta,
+    this.onArrastreHorizontal,
   });
 
-  Widget _tarjeta(Tarea tarea) {
+  Widget _tarjeta(BuildContext context, Tarea tarea) {
     final etiquetas = tarea.etiquetaIds
         .map((id) => etiquetasPorId[id])
         .whereType<TareaEtiqueta>()
@@ -606,35 +532,67 @@ class _ListaTarjetas extends StatelessWidget {
         .map((id) => miembrosPorId[id])
         .whereType<Miembro>()
         .toList();
-    return RepaintBoundary(
-      key: ValueKey(tarea.id),
-      child: Draggable<Tarea>(
-        data: tarea,
-        feedback: Material(
-          color: Colors.transparent,
-          child: SizedBox(
-            width: 256,
-            child: KanbanTaskCard(
-              tarea: tarea,
-              etiquetas: etiquetas,
-              miembros: miembros,
-              onTap: () {},
-            ),
-          ),
-        ),
-        childWhenDragging: Opacity(
-          opacity: 0.35,
-          child: KanbanTaskCard(tarea: tarea, onTap: () {}),
-        ),
+    final feedback = Material(
+      color: Colors.transparent,
+      child: SizedBox(
+        width: 256,
         child: KanbanTaskCard(
           tarea: tarea,
           etiquetas: etiquetas,
           miembros: miembros,
-          onTap: () => onTapTarea(tarea),
-          onArchivar: () => onArchivarTarjeta(tarea),
-          onEliminar: () => onEliminarTarjeta(tarea),
+          onTap: () {},
         ),
       ),
+    );
+    final childWhenDragging = Opacity(
+      opacity: 0.35,
+      child: KanbanTaskCard(tarea: tarea, onTap: () {}),
+    );
+    final child = KanbanTaskCard(
+      tarea: tarea,
+      etiquetas: etiquetas,
+      miembros: miembros,
+      onTap: () => onTapTarea(tarea),
+      onArchivar: () => onArchivarTarjeta(tarea),
+      onEliminar: () => onEliminarTarjeta(tarea),
+    );
+    // En touch, `Draggable` normal le gana la primicia del gesto a un
+    // scroll vertical apenas se toca la tarjeta, así que en la práctica
+    // sería imposible hacer scroll dentro de una columna sin "levantar"
+    // una tarjeta por accidente. `LongPressDraggable` deja que un swipe
+    // rápido siga haciendo scroll y solo arranca el arrastre si el dedo
+    // se queda quieto un momento, como en Trello. En desktop se deja el
+    // `Draggable` normal: ahí el arrastre parte de un click+mantener del
+    // mouse, que no compite con ningún gesto de scroll.
+    final esMovil = MediaQuery.sizeOf(context).width < 600;
+    // `onDragUpdate` viene del propio `Draggable` (la posición del dedo/
+    // mouse durante SU arrastre), no de un `DragTarget.onMove`: este
+    // último solo se dispara mientras el cursor está encima de un
+    // `DragTarget` ya renderizado, y cerca del borde del tablero —
+    // exactamente donde hace falta el autoscroll horizontal para revelar
+    // la siguiente columna— ya no hay ninguna columna debajo del cursor,
+    // así que el autoscroll se quedaba callado justo ahí. Reportar la
+    // posición directo desde la tarjeta que se arrastra funciona sin
+    // importar qué haya (o no) debajo.
+    void onDragUpdate(DragUpdateDetails details) =>
+        onArrastreHorizontal?.call(details.globalPosition);
+    return RepaintBoundary(
+      key: ValueKey(tarea.id),
+      child: esMovil
+          ? LongPressDraggable<Tarea>(
+              data: tarea,
+              feedback: feedback,
+              childWhenDragging: childWhenDragging,
+              onDragUpdate: onDragUpdate,
+              child: child,
+            )
+          : Draggable<Tarea>(
+              data: tarea,
+              feedback: feedback,
+              childWhenDragging: childWhenDragging,
+              onDragUpdate: onDragUpdate,
+              child: child,
+            ),
     );
   }
 
@@ -671,7 +629,9 @@ class _ListaTarjetas extends StatelessWidget {
         if (index == 2 * n) return gapBuilder(n);
         if (index == 2 * n + 1) return const SizedBox(height: 4);
         final pair = index ~/ 2;
-        return index.isEven ? gapBuilder(pair) : _tarjeta(tareas[pair]);
+        return index.isEven
+            ? gapBuilder(pair)
+            : _tarjeta(context, tareas[pair]);
       },
     );
   }

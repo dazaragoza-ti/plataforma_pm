@@ -3,7 +3,7 @@ import '../../../kanban_constants.dart';
 import '../../../domain/entities/miembro.dart';
 import '../../../domain/entities/tarea.dart';
 import '../../../domain/entities/tarea_etiqueta.dart';
-import '../avatar_stack.dart';
+import '../common/avatar_stack.dart';
 import '../csv_export/csv_utils.dart';
 import '../csv_export/descargar_csv.dart';
 
@@ -304,7 +304,18 @@ class _KanbanListaViewState extends State<KanbanListaView> {
             for (final c in widget.columnas)
               PopupMenuItem(
                 value: c.estatus,
-                child: Text(c.titulo, style: const TextStyle(fontSize: 12.5)),
+                child: Text(
+                  // Aviso del límite de WIP aquí mismo: sin esto, mover en
+                  // lote a una columna ya llena (p. ej. Proceso, límite 1)
+                  // solo se enteraba al ver el toast de rechazo después de
+                  // elegirla — mejor que la lista ya lo muestre.
+                  c.limiteWip == null
+                      ? c.titulo
+                      : '${c.titulo} '
+                            '(${widget.tareas.where((t) => t.estatus == c.estatus).length}'
+                            '/${c.limiteWip})',
+                  style: const TextStyle(fontSize: 12.5),
+                ),
               ),
           ],
           child: Padding(
@@ -597,7 +608,9 @@ class _KanbanListaViewState extends State<KanbanListaView> {
               : Padding(
                   padding: const EdgeInsets.all(16),
                   child: Container(
-                    decoration: KanbanColors.cardDecoration(radius: 12),
+                    decoration: KanbanColors.cardDecorationConFondo(
+                      radius: 12,
+                    ),
                     clipBehavior: Clip.antiAlias,
                     // `LayoutBuilder` + `ConstrainedBox(minWidth: ...)`: sin esto,
                     // la tabla (más angosta que la pantalla) queda pegada a la
@@ -625,7 +638,7 @@ class _KanbanListaViewState extends State<KanbanListaView> {
                                   sortColumnIndex: _columnaOrden,
                                   sortAscending: _ascendente,
                                   headingRowColor: WidgetStateProperty.all(
-                                    KanbanColors.bg3,
+                                    KanbanColors.bg3ConFondo,
                                   ),
                                   dividerThickness: 1,
                                   horizontalMargin: 16,
@@ -700,37 +713,63 @@ class _KanbanListaViewState extends State<KanbanListaView> {
                                     ),
                                   ],
                                   rows: [
-                                    for (final t in filas)
+                                    for (var i = 0; i < filas.length; i++)
                                       DataRow(
-                                        selected: _seleccionados.contains(t.id),
+                                        // Filas alternadas, mismo lenguaje que
+                                        // ya usaban las del Gantt: una deja ver
+                                        // tal cual el fondo de la tarjeta (que
+                                        // ya lleva el tinte del selector de
+                                        // paleta) y la otra es una franja más
+                                        // clara encima — antes todas las filas
+                                        // eran iguales y planas.
+                                        color: WidgetStateProperty.resolveWith((
+                                          states,
+                                        ) {
+                                          if (states.contains(
+                                            WidgetState.selected,
+                                          )) {
+                                            return KanbanColors.accentLight;
+                                          }
+                                          return i.isOdd
+                                              ? KanbanColors.bg3.withValues(
+                                                  alpha: 0.4,
+                                                )
+                                              : Colors.transparent;
+                                        }),
+                                        selected: _seleccionados.contains(
+                                          filas[i].id,
+                                        ),
                                         onSelectChanged: (v) => setState(() {
                                           if (v ?? false) {
-                                            _seleccionados.add(t.id);
+                                            _seleccionados.add(filas[i].id);
                                           } else {
-                                            _seleccionados.remove(t.id);
+                                            _seleccionados.remove(filas[i].id);
                                           }
                                         }),
                                         cells: [
-                                          DataCell(_celdaEstado(t)),
+                                          DataCell(_celdaEstado(filas[i])),
                                           DataCell(
-                                            _celdaTitulo(t),
-                                            onTap: () => widget.onAbrirTarea(t),
+                                            _celdaTitulo(filas[i]),
+                                            onTap: () =>
+                                                widget.onAbrirTarea(filas[i]),
                                           ),
-                                          DataCell(_celdaEtiquetas(t)),
-                                          DataCell(_celdaPrioridad(t)),
+                                          DataCell(_celdaEtiquetas(filas[i])),
+                                          DataCell(_celdaPrioridad(filas[i])),
                                           DataCell(
                                             Text(
-                                              t.grupo.isEmpty ? '—' : t.grupo,
+                                              filas[i].grupo.isEmpty
+                                                  ? '—'
+                                                  : filas[i].grupo,
                                               style: TextStyle(
                                                 fontSize: 12.5,
                                                 color: KanbanColors.texto,
                                               ),
                                             ),
                                           ),
-                                          DataCell(_celdaAsignados(t)),
-                                          DataCell(_celdaVencimiento(t)),
-                                          DataCell(_celdaProgreso(t)),
-                                          DataCell(_celdaAcciones(t)),
+                                          DataCell(_celdaAsignados(filas[i])),
+                                          DataCell(_celdaVencimiento(filas[i])),
+                                          DataCell(_celdaProgreso(filas[i])),
+                                          DataCell(_celdaAcciones(filas[i])),
                                         ],
                                       ),
                                   ],
@@ -948,4 +987,5 @@ class _KanbanListaViewState extends State<KanbanListaView> {
       ],
     );
   }
+
 }

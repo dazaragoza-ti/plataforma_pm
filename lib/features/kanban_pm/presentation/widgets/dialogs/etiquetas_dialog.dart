@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import '../../kanban_constants.dart';
-import '../../data/kanban_repository.dart';
-import '../../domain/entities/tarea_etiqueta.dart';
+import '../../../kanban_constants.dart';
+import '../../../data/kanban_repository.dart';
+import '../../../domain/entities/tarea_etiqueta.dart';
+import '../common/color_wheel_picker.dart';
 
 /// Gestor de etiquetas del tablero: renombrar/recolorear o eliminar una
 /// existente, o crear una nueva — todo desde un solo lugar en vez de solo
@@ -354,26 +355,12 @@ class _EtiquetaFormDialogState extends State<_EtiquetaFormDialog> {
                 ),
               ),
               const SizedBox(height: 6),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  for (final c in kColorPaletteEtiquetas)
-                    InkWell(
-                      onTap: () => setState(() => _color = c),
-                      child: Container(
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          color: c,
-                          shape: BoxShape.circle,
-                          border: _color == c
-                              ? Border.all(color: KanbanColors.texto, width: 2)
-                              : null,
-                        ),
-                      ),
-                    ),
-                ],
+              Center(
+                child: ColorWheelPicker(
+                  initialColor: _color,
+                  size: 170,
+                  onColorChanged: (c) => setState(() => _color = c),
+                ),
               ),
               const SizedBox(height: 18),
               Row(

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import '../../kanban_constants.dart';
-import '../../domain/entities/miembro.dart';
-import '../../domain/entities/tarea.dart';
-import '../../domain/entities/tarea_etiqueta.dart';
-import 'avatar_stack.dart';
+import '../../../kanban_constants.dart';
+import '../../../domain/entities/miembro.dart';
+import '../../../domain/entities/tarea.dart';
+import '../../../domain/entities/tarea_etiqueta.dart';
+import '../common/avatar_stack.dart';
 
 /// Tarjeta que representa una [Tarea] dentro de una columna del tablero,
 /// con look estilo Trello: portada, etiquetas de color, pastillas de
@@ -241,6 +241,21 @@ class KanbanTaskCard extends StatelessWidget {
                           spacing: 6,
                           runSpacing: 6,
                           children: [
+                            // Sin este aviso, la tarjeta saltaba sola a
+                            // "Pausa" (al asignar el responsable de una
+                            // subtarea) sin ninguna pista visual de por qué
+                            // — Lista y Gráficas ya lo muestran, aquí
+                            // faltaba.
+                            if (tarea.pausadaPorSubtarea)
+                              Tooltip(
+                                message: 'Bloqueada por una subtarea sin '
+                                    'resolver',
+                                child: _pill(
+                                  icon: Icons.pause_circle_outline_rounded,
+                                  texto: 'Bloqueada',
+                                  color: const Color(0xFFFD7E14),
+                                ),
+                              ),
                             if (tarea.actividades.isNotEmpty)
                               _pill(
                                 icon: Icons.checklist_rounded,
@@ -249,12 +264,6 @@ class KanbanTaskCard extends StatelessWidget {
                                 color: checklistCompleto
                                     ? KanbanColors.ok
                                     : KanbanColors.tdim,
-                              ),
-                            if (tarea.comentarios.isNotEmpty)
-                              _pill(
-                                icon: Icons.chat_bubble_outline_rounded,
-                                texto: '${tarea.comentarios.length}',
-                                color: KanbanColors.tdim,
                               ),
                             if (tarea.dependeDeIds.isNotEmpty)
                               _pill(

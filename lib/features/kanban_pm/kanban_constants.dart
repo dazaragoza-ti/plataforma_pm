@@ -1,4 +1,10 @@
 import 'package:flutter/material.dart';
+import 'domain/entities/kanban_columna.dart';
+import 'domain/entities/tarea_estatus.dart';
+
+export 'domain/entities/kanban_columna.dart';
+export 'domain/entities/tarea_estatus.dart';
+export 'domain/entities/tarea_prioridad.dart';
 
 /// Paleta de colores del módulo (un valor por rol visual). Dos instancias
 /// constantes (clara/oscura) viven detrás de [KanbanColors].
@@ -96,6 +102,13 @@ class KanbanColors {
     _activa = valor ? _paletaOscura : _paletaClara;
   }
 
+  /// Color de fondo del tablero elegido con el selector de paleta (ver
+  /// `_fondoIdx` en el dashboard) — `null` mientras no se haya tocado ese
+  /// selector. Vive aquí, junto a [oscuro], para que cualquier
+  /// tarjeta/tile del módulo pueda teñirse con él sin tener que recibirlo
+  /// por parámetro desde la pantalla que sí lo controla.
+  static Color? fondoTablero;
+
   static Color get accent => _activa.accent;
   static Color get accentLight => _activa.accentLight;
   static Color get accentDark => _activa.accentDark;
@@ -124,6 +137,43 @@ class KanbanColors {
     border: Border.all(color: borde),
   );
 
+  /// `bg2` mezclado con [fondoTablero], para tarjetas/tiles a las que sí
+  /// les toca dejar ver el color de fondo elegido en el selector de
+  /// paleta — el mismo lenguaje visual que ya usaban las filas del Gantt
+  /// (`bg3.withValues(alpha: 0.4)` sobre el fondo del `Scaffold`, es decir
+  /// solo 40% del tono neutro y 60% del color elegido), pero mezclado en
+  /// vez de superpuesto para no perder legibilidad del texto. Con el
+  /// primer valor probado (72% neutro) el resultado se veía casi blanco:
+  /// muy por debajo de lo notorio que se ve en el Gantt. Sin
+  /// [fondoTablero] elegido (o en modo oscuro, que no usa
+  /// `kFondosTablero`) es idéntico a [bg2].
+  static Color get bg2ConFondo {
+    final fondo = fondoTablero;
+    if (oscuro || fondo == null) return bg2;
+    return Color.alphaBlend(bg2.withValues(alpha: 0.4), fondo);
+  }
+
+  /// Igual que [bg2ConFondo] pero mezclando sobre [bg3] — para superficies
+  /// que normalmente usan ese tono en vez de `bg2` (p. ej. el cuerpo de
+  /// una columna del tablero).
+  static Color get bg3ConFondo {
+    final fondo = fondoTablero;
+    if (oscuro || fondo == null) return bg3;
+    return Color.alphaBlend(bg3.withValues(alpha: 0.4), fondo);
+  }
+
+  /// Variante de [cardDecoration] que deja ver el fondo del tablero (ver
+  /// [bg2ConFondo]) — para las tarjetas/tiles de Kanban, Lista y Gráficas
+  /// que antes se quedaban blancas/oscuras sin importar qué fondo se
+  /// eligiera en el selector de paleta, a diferencia de las filas del
+  /// Gantt.
+  static BoxDecoration cardDecorationConFondo({double radius = 10}) =>
+      BoxDecoration(
+        color: bg2ConFondo,
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(color: borde),
+      );
+
   /// Estilo de [SegmentedButton] con la paleta propia del módulo (acento
   /// naranja) en vez del azul del `ColorScheme` global de la app — sin
   /// esto, el segmento seleccionado hereda `colorScheme.primary` del tema
@@ -149,52 +199,6 @@ class KanbanColors {
   }
 }
 
-enum TareaEstatus { tareas, proceso, pausa, terminado, revisado }
-
-extension TareaEstatusX on TareaEstatus {
-  /// Único punto de verdad para "¿este estatus ya está fuera del flujo
-  /// activo?" (terminado o revisado) — evita repetir el `||` en cada sitio
-  /// que necesita tratarlos como equivalentes.
-  bool get esCerrado =>
-      this == TareaEstatus.terminado || this == TareaEstatus.revisado;
-}
-
-class KanbanColumna {
-  final TareaEstatus estatus;
-  final String titulo;
-  final IconData icono;
-  final Color color;
-  final bool archivada;
-
-  /// Límite de tarjetas (WIP) sugerido para esta columna — `null` significa
-  /// sin límite. Es solo un aviso visual: no bloquea soltar una tarjeta de
-  /// más.
-  final int? limiteWip;
-
-  const KanbanColumna({
-    required this.estatus,
-    required this.titulo,
-    required this.icono,
-    required this.color,
-    this.archivada = false,
-    this.limiteWip,
-  });
-
-  KanbanColumna copyWith({
-    String? titulo,
-    bool? archivada,
-    int? limiteWip,
-    bool limpiarLimiteWip = false,
-  }) => KanbanColumna(
-    estatus: estatus,
-    titulo: titulo ?? this.titulo,
-    icono: icono,
-    color: color,
-    archivada: archivada ?? this.archivada,
-    limiteWip: limpiarLimiteWip ? null : (limiteWip ?? this.limiteWip),
-  );
-}
-
 const List<KanbanColumna> kColumnas = [
   KanbanColumna(
     estatus: TareaEstatus.tareas,
@@ -207,6 +211,12 @@ const List<KanbanColumna> kColumnas = [
     titulo: 'PROCESO',
     icono: Icons.bookmark_rounded,
     color: Color(0xFF2196F3),
+    // Regla del negocio: solo una tarea a la vez en proceso. Antes el
+    // límite de WIP era puramente decorativo (solo pintaba la columna en
+    // rojo al pasarse) — ver [_moverTarea]/[_moverTareasEnLote] en el
+    // dashboard y `_iniciar` en `TareaDetailDialog`, que ahora sí
+    // bloquean el movimiento en vez de solo advertirlo.
+    limiteWip: 1,
   ),
   KanbanColumna(
     estatus: TareaEstatus.pausa,
@@ -227,24 +237,6 @@ const List<KanbanColumna> kColumnas = [
     color: Color(0xFF28A745),
   ),
 ];
-
-enum TareaPrioridad { baja, media, alta, urgente }
-
-extension TareaPrioridadX on TareaPrioridad {
-  String get etiqueta => switch (this) {
-    TareaPrioridad.baja => 'Baja',
-    TareaPrioridad.media => 'Media',
-    TareaPrioridad.alta => 'Alta',
-    TareaPrioridad.urgente => 'Urgente',
-  };
-
-  Color get color => switch (this) {
-    TareaPrioridad.baja => const Color(0xFF22C55E),
-    TareaPrioridad.media => const Color(0xFF2196F3),
-    TareaPrioridad.alta => const Color(0xFFF59E0B),
-    TareaPrioridad.urgente => const Color(0xFFEF4444),
-  };
-}
 
 /// Usuario "de sesión" de referencia para la demo (MIS TAREAS, Asignado por).
 /// TODO: cuando exista autenticación real, tomar esto del usuario logueado.
@@ -292,7 +284,10 @@ const List<(String, Color)> kImportanciaDemo = [
 ];
 
 /// Paleta de colores para crear etiquetas nuevas y para elegir portada de
-/// tarjeta, estilo Trello.
+/// tarjeta, estilo Trello. 20 en vez de 10: la mitad original ya cubría un
+/// tono por familia (rojo, ámbar, verde...) pero no dejaba elegir entre una
+/// variante más clara/oscura o un tono vecino (cian, lima, violeta) sin
+/// terminar repitiendo colores ya usados por otra etiqueta.
 const List<Color> kColorPaletteEtiquetas = [
   Color(0xFFEF4444),
   Color(0xFFF59E0B),
@@ -304,6 +299,16 @@ const List<Color> kColorPaletteEtiquetas = [
   Color(0xFFA855F7),
   Color(0xFFEC4899),
   Color(0xFF64748B),
+  Color(0xFFDC2626),
+  Color(0xFFFB923C),
+  Color(0xFF84CC16),
+  Color(0xFF10B981),
+  Color(0xFF06B6D4),
+  Color(0xFF0EA5E9),
+  Color(0xFF8B5CF6),
+  Color(0xFFD946EF),
+  Color(0xFFF43F5E),
+  Color(0xFF334155),
 ];
 
 /// Colores predefinidos para el fondo del tablero (estilo Trello).

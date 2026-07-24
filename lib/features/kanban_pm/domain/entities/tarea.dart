@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../kanban_constants.dart';
 import 'actividad.dart';
-import 'comentario.dart';
 import 'historial_evento.dart';
 
 /// Tarea del tablero Kanban.
@@ -27,7 +26,6 @@ class Tarea {
   final (String, Color)? nivel;
   final (String, Color)? importancia;
   final List<Actividad> actividades;
-  final List<Comentario> comentarios;
 
   /// Posición dentro de su columna (`estatus`), usada para ordenar y para
   /// arrastrar una tarjeta a una posición exacta (estilo Trello).
@@ -82,7 +80,6 @@ class Tarea {
     this.nivel,
     this.importancia,
     this.actividades = const [],
-    this.comentarios = const [],
     this.orden = 0,
     this.etiquetaIds = const [],
     this.miembroIds = const [],
@@ -135,7 +132,6 @@ class Tarea {
     (String, Color)? nivel,
     (String, Color)? importancia,
     List<Actividad>? actividades,
-    List<Comentario>? comentarios,
     int? orden,
     List<int>? etiquetaIds,
     List<int>? miembroIds,
@@ -164,7 +160,6 @@ class Tarea {
       nivel: nivel ?? this.nivel,
       importancia: importancia ?? this.importancia,
       actividades: actividades ?? this.actividades,
-      comentarios: comentarios ?? this.comentarios,
       orden: orden ?? this.orden,
       etiquetaIds: etiquetaIds ?? this.etiquetaIds,
       miembroIds: miembroIds ?? this.miembroIds,
