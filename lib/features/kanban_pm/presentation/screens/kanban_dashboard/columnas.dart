@@ -102,7 +102,14 @@ mixin _KanbanDashboardColumnasMixin on _KanbanDashboardDatosMixin {
     await _repo.reordenarColumnas(resultado.map((c) => c.estatus).toList());
   }
 
-  Widget _columnaGap(int gapIndex) {
+  /// Zona para soltar una lista entre dos columnas. El área que realmente
+  /// detecta el arrastre (`SizedBox` de ancho fijo y alto completo) es bien
+  /// más grande que la línea que se ve — antes el `DragTarget` cambiaba de
+  /// tamaño según si estaba activo (6 a 24 de ancho, sin alto explícito), así
+  /// que el hueco real donde soltar era angosto e impredecible. Con un
+  /// tamaño fijo de antemano el usuario puede soltar en cualquier punto de
+  /// esa franja, sin apuntar a un pixel exacto.
+  Widget _columnaGap(int gapIndex, double alto) {
     return DragTarget<KanbanColumna>(
       onWillAcceptWithDetails: (_) => true,
       onAcceptWithDetails: (details) =>
@@ -110,16 +117,21 @@ mixin _KanbanDashboardColumnasMixin on _KanbanDashboardDatosMixin {
       onMove: (details) => _manejarAutoscrollHorizontal(details.offset),
       builder: (context, candidateData, rejectedData) {
         final activo = candidateData.isNotEmpty;
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          curve: Curves.easeOut,
-          width: activo ? 24 : 6,
-          decoration: activo
-              ? BoxDecoration(
-                  color: KanbanColors.accentLight,
-                  borderRadius: BorderRadius.circular(4),
-                )
-              : null,
+        return SizedBox(
+          width: 26,
+          height: alto,
+          child: Center(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              curve: Curves.easeOut,
+              width: activo ? 5 : 0,
+              height: alto,
+              decoration: BoxDecoration(
+                color: KanbanColors.accent,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+          ),
         );
       },
     );

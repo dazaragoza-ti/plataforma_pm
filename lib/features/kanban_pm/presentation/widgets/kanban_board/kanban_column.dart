@@ -475,7 +475,6 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
   Widget build(BuildContext context) {
     return Container(
       width: widget.ancho,
-      margin: const EdgeInsets.only(right: 14),
       decoration: BoxDecoration(
         color: KanbanColors.bg3ConFondo,
         borderRadius: BorderRadius.circular(10),

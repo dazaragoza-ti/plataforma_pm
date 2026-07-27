@@ -120,7 +120,7 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   for (var i = 0; i < visibles.length; i++) ...[
-                    _columnaGap(i),
+                    _columnaGap(i, constraints.maxHeight),
                     SizedBox(
                       key: ValueKey(visibles[i].estatus),
                       height: constraints.maxHeight,
@@ -153,7 +153,7 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen>
                       ),
                     ),
                   ],
-                  _columnaGap(visibles.length),
+                  _columnaGap(visibles.length, constraints.maxHeight),
                 ],
               ),
             );
