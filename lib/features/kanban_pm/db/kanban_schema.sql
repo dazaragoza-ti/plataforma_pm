@@ -10,14 +10,17 @@
 --   lib/features/kanban_pm/domain/entities/*.dart
 --   lib/features/kanban_pm/data/kanban_repository.dart
 --   lib/features/kanban_pm/data/workspace_repository.dart
+--   lib/features/kanban_pm/data/usuario_directorio.dart
 -- (hoy implementados en memoria vía InMemoryKanbanRepository /
--- InMemoryWorkspaceRepository) — pensado para el día que ese mismo
--- contrato se respalde con un backend/API real, sin tocar la capa de
--- presentación (ver el comentario de diseño en kanban_repository.dart).
+-- InMemoryWorkspaceRepository / UsuarioDirectorio) — pensado para el día
+-- que ese mismo contrato se respalde con un backend/API real, sin tocar la
+-- capa de presentación (ver el comentario de diseño en kanban_repository.dart).
 --
--- No incluye login/usuarios: los campos "autor"/"asignado_por" hoy son
--- texto libre (no hay tabla de usuarios en el módulo todavía) — cuando
--- exista autenticación real, esos campos pasan a ser FKs a esa tabla.
+-- Login real: todavía no existe (`usuario_actual` en Dart es una sesión
+-- simulada, cambiable a mano desde el selector de áreas). Cuando exista
+-- autenticación de verdad, `usuario` pasa a poblarse desde ahí en vez de
+-- sembrarse a mano, pero el resto del modelo (membresías, catálogo
+-- personal de etiquetas) no cambia.
 -- ============================================================================
 
 
@@ -58,7 +61,21 @@ INSERT INTO color_paleta_catalogo (orden, color_hex) VALUES
 
 
 -- ============================================================================
--- 2. WORKSPACE (área de trabajo) — un tablero Kanban completo e
+-- 2. USUARIO — directorio de personas COMPARTIDO por toda la app (no por
+--    workspace), ver domain/entities/usuario.dart y data/usuario_directorio.dart.
+--    Es la pieza que falta para que "la misma persona" en dos áreas de
+--    trabajo distintas sea reconocida como una sola identidad, en vez de
+--    dos registros [miembro] sin relación.
+-- ============================================================================
+CREATE TABLE usuario (
+  id               BIGSERIAL    PRIMARY KEY,
+  nombre           VARCHAR(120) NOT NULL,
+  color_avatar_hex CHAR(7)      NOT NULL
+);
+
+
+-- ============================================================================
+-- 3. WORKSPACE (área de trabajo) — un tablero Kanban completo e
 --    independiente, ver domain/entities/workspace.dart
 -- ============================================================================
 CREATE TABLE workspace (
@@ -74,7 +91,7 @@ CREATE TABLE workspace (
 
 
 -- ============================================================================
--- 3. KANBAN_COLUMNA (listas del tablero) — escaneado por workspace, ver
+-- 4. KANBAN_COLUMNA (listas del tablero) — escaneado por workspace, ver
 --    domain/entities/kanban_columna.dart
 -- ============================================================================
 CREATE TABLE kanban_columna (
@@ -97,31 +114,124 @@ CREATE TABLE kanban_columna (
 
 
 -- ============================================================================
--- 4. MIEMBRO (personas del catálogo, por workspace) — ver
+-- 5. MIEMBRO (personas del catálogo, por workspace) — ver
 --    domain/entities/miembro.dart
 -- ============================================================================
 CREATE TABLE miembro (
   id               BIGSERIAL    PRIMARY KEY,
   workspace_id     BIGINT       NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
   nombre           VARCHAR(120) NOT NULL,
-  color_avatar_hex CHAR(7)      NOT NULL
+  color_avatar_hex CHAR(7)      NOT NULL,
+  -- Liga este registro (local a este workspace) con el [usuario] global —
+  -- NULL si es alguien que solo existe aquí, sin cuenta en el directorio
+  -- compartido. Ver [Miembro.usuarioId].
+  usuario_id       BIGINT       REFERENCES usuario(id) ON DELETE SET NULL,
+  -- Nivel de participación de esta persona EN ESTE workspace — no es un
+  -- atributo del usuario global, la misma persona puede ser 'dueño' de su
+  -- propia área y 'invitado' en la de alguien más al mismo tiempo:
+  --   'dueño'    → la creó; puede archivarla/eliminarla además de todo lo
+  --                que puede un 'miembro'.
+  --   'miembro'  → participante pleno: administra columnas/etiquetas/
+  --                miembros del catálogo, no solo se asigna tareas.
+  --   'invitado' → agregada/o solo porque le tocó una actividad puntual
+  --                (ver el escenario de la sección 7.1 más abajo) — puede
+  --                ver el tablero y trabajar en lo suyo, pero NO administra
+  --                el catálogo de etiquetas/columnas/miembros del área.
+  rol              VARCHAR(20)  NOT NULL DEFAULT 'miembro',
+  CONSTRAINT chk_rol_miembro CHECK (rol IN ('dueño', 'miembro', 'invitado'))
 );
 
 
 -- ============================================================================
--- 5. TAREA_ETIQUETA (labels del catálogo, por workspace) — ver
+-- 6. USUARIO_ETIQUETA — catálogo PERSONAL de etiquetas de un usuario,
+--    reutilizable entre sus áreas de trabajo. Ver la sección 7.1 (comentario
+--    largo) para la explicación completa de cómo se relaciona con
+--    [tarea_etiqueta] y qué pasa con usuarios invitados.
+-- ============================================================================
+CREATE TABLE usuario_etiqueta (
+  id         BIGSERIAL    PRIMARY KEY,
+  usuario_id BIGINT       NOT NULL REFERENCES usuario(id) ON DELETE CASCADE,
+  nombre     VARCHAR(60)  NOT NULL,
+  color_hex  CHAR(7)      NOT NULL,
+  UNIQUE (usuario_id, nombre)
+);
+
+
+-- ============================================================================
+-- 7. TAREA_ETIQUETA (labels del catálogo, por workspace) — ver
 --    domain/entities/tarea_etiqueta.dart
 -- ============================================================================
 CREATE TABLE tarea_etiqueta (
   id           BIGSERIAL    PRIMARY KEY,
   workspace_id BIGINT       NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
   nombre       VARCHAR(60)  NOT NULL,
-  color_hex    CHAR(7)      NOT NULL
+  color_hex    CHAR(7)      NOT NULL,
+  -- Si esta etiqueta (local a este workspace) vino de propagar el catálogo
+  -- PERSONAL de alguien ("aparecer en todas mis áreas"), aquí queda la
+  -- referencia — NULL si nació como una etiqueta suelta, solo de este
+  -- workspace (el caso de hoy, sin cambios).
+  usuario_etiqueta_id BIGINT REFERENCES usuario_etiqueta(id) ON DELETE SET NULL
 );
+
+-- ----------------------------------------------------------------------------
+-- 7.1 CÓMO FUNCIONA EL COMPARTIDO DE ETIQUETAS ENTRE WORKSPACES
+-- ----------------------------------------------------------------------------
+-- Un usuario puede tener VARIAS etiquetas propias (usuario_etiqueta) y
+-- reutilizar la misma en distintas áreas de trabajo. `tarea_etiqueta`
+-- sigue siendo, como hoy, 100% local a un workspace (una tarea asigna
+-- etiquetas por su id LOCAL, igual que siempre) — lo que cambia es que esa
+-- fila local puede opcionalmente estar "ligada" a un usuario_etiqueta.
+--
+-- Al crear una etiqueta se elige entre dos caminos (ver
+-- sp_crear_etiqueta_personal más abajo):
+--   • "Solo en esta área"       → INSERT normal en tarea_etiqueta,
+--                                   usuario_etiqueta_id = NULL. Es el
+--                                   comportamiento de hoy, sin cambios.
+--   • "En todas mis áreas"      → crea/reutiliza un usuario_etiqueta y
+--                                   además una copia local (tarea_etiqueta)
+--                                   en cada workspace donde ese usuario ya
+--                                   es 'dueño' o 'miembro' (NUNCA en donde
+--                                   es 'invitado' — ver más abajo por qué).
+--
+-- Editar una etiqueta LIGADA (trg_propagar_etiqueta_personal) actualiza el
+-- usuario_etiqueta y de ahí se refleja sola en todas sus copias locales —
+-- así no hay que ir workspace por workspace a corregir un color. Si en un
+-- área puntual se quiere que YA NO seas la misma ("desvincular y editar
+-- solo aquí"), basta con poner esa fila local en usuario_etiqueta_id = NULL
+-- antes de editarla: a partir de ahí es una etiqueta local independiente,
+-- sin tocar las demás copias ni el catálogo personal.
+--
+-- Eliminar el usuario_etiqueta (desde un catálogo personal, fuera de
+-- cualquier workspace en particular) NO borra en cascada las copias locales
+-- — quedan huérfanas (usuario_etiqueta_id → NULL, ON DELETE SET NULL) y
+-- siguen existiendo como etiquetas normales de cada workspace. Borrar tu
+-- plantilla personal no debería vaciar de golpe las etiquetas que ya están
+-- puestas en tareas de otras áreas.
+--
+-- EL CASO DE LA PERSONA INVITADA (el que preguntaste): el departamento de
+-- TI necesita que alguien de Calidad complete una sola actividad, así que
+-- se le agrega como `miembro` de tipo 'invitado' del workspace de TI.
+--   • Qué etiquetas VE en el tablero de TI: exactamente las mismas que ve
+--     cualquier otro miembro de TI — tarea_etiqueta es del workspace, no
+--     de quien lo mira, así que esto no necesita ningún manejo especial.
+--   • Sus etiquetas personales de Calidad (usuario_etiqueta) NO aparecen
+--     ni se pueden usar dentro del workspace de TI: nada las propaga ahí
+--     porque nunca se le agregaron manualmente a ESE catálogo, y aunque él
+--     cree una etiqueta personal nueva mientras trabaja en TI, "todas mis
+--     áreas" nunca cuenta un área donde su rol es 'invitado' (ver
+--     sp_crear_etiqueta_personal) — así su tablero de Calidad no se llena
+--     de etiquetas pensadas para una tarea ajena de TI.
+--   • Tampoco puede crear/editar/borrar etiquetas DENTRO del catálogo de
+--     TI (trg_bloquear_catalogo_invitado) — un invitado puede aplicar a
+--     sus tareas las etiquetas que YA existen en ese workspace, pero no
+--     administrar el catálogo compartido de un área a la que no pertenece
+--     de verdad. Sí puede seguir creando/editando etiquetas normalmente en
+--     los workspaces donde su rol es 'dueño' o 'miembro'.
+-- ----------------------------------------------------------------------------
 
 
 -- ============================================================================
--- 6. TAREA (tarjeta del Kanban) — ver domain/entities/tarea.dart
+-- 8. TAREA (tarjeta del Kanban) — ver domain/entities/tarea.dart
 -- ============================================================================
 CREATE TABLE tarea (
   id                    BIGSERIAL    PRIMARY KEY,
@@ -162,7 +272,7 @@ CREATE TABLE tarea (
 
 
 -- ============================================================================
--- 7. TAREA_ACTIVIDAD (subtareas/checklist, árbol vía padre_id — delegación
+-- 9. TAREA_ACTIVIDAD (subtareas/checklist, árbol vía padre_id — delegación
 --    sin límite de profundidad) — equivale a `tar_act` en el sistema
 --    original, ver domain/entities/actividad.dart
 -- ============================================================================
@@ -183,9 +293,9 @@ CREATE TABLE tarea_actividad (
 
 
 -- ============================================================================
--- 8. TAREA_HISTORIAL — bitácora de la tarea, ver
---    domain/entities/historial_evento.dart. Se llena SOLA vía los triggers
---    de la sección 13 — ninguna capa de la aplicación inserta aquí a mano.
+-- 10. TAREA_HISTORIAL — bitácora de la tarea, ver
+--     domain/entities/historial_evento.dart. Se llena SOLA vía los triggers
+--     de la sección 15 — ninguna capa de la aplicación inserta aquí a mano.
 -- ============================================================================
 CREATE TABLE tarea_historial (
   id       BIGSERIAL    PRIMARY KEY,
@@ -197,7 +307,7 @@ CREATE TABLE tarea_historial (
 
 
 -- ============================================================================
--- 9. RELACIONES N:M
+-- 11. RELACIONES N:M
 -- ============================================================================
 
 -- Tarea.etiquetaIds
@@ -225,7 +335,7 @@ CREATE TABLE tarea_dependencia (
 
 
 -- ============================================================================
--- 10. TAREA_PLANTILLA (templates editables para crear tarjetas rápido) —
+-- 12. TAREA_PLANTILLA (templates editables para crear tarjetas rápido) —
 --     ver domain/entities/tarea_plantilla.dart
 -- ============================================================================
 CREATE TABLE tarea_plantilla (
@@ -263,7 +373,7 @@ CREATE TABLE tarea_plantilla_miembro (
 
 
 -- ============================================================================
--- 11. ÍNDICES
+-- 13. ÍNDICES
 -- ============================================================================
 CREATE INDEX idx_tarea_workspace_estatus
   ON tarea (workspace_id, estatus_id) WHERE NOT archivada;
@@ -277,10 +387,14 @@ CREATE INDEX idx_tarea_dependencia_depende ON tarea_dependencia (depende_de_tare
 -- KanbanRepository.listarTareas(busqueda: ...) busca por título/grupo.
 CREATE INDEX idx_tarea_busqueda
   ON tarea USING gin (to_tsvector('spanish', titulo || ' ' || grupo));
+-- Filtrar "áreas de las que soy miembro" (WorkspaceRepository.listarWorkspacesDe)
+-- y resolver el catálogo personal de etiquetas son consultas frecuentes.
+CREATE INDEX idx_miembro_usuario     ON miembro (usuario_id) WHERE usuario_id IS NOT NULL;
+CREATE INDEX idx_tarea_etiqueta_personal ON tarea_etiqueta (usuario_etiqueta_id) WHERE usuario_etiqueta_id IS NOT NULL;
 
 
 -- ============================================================================
--- 12. VISTA — resumen de workspace (equivalente SQL de Workspace.tareasCount)
+-- 14. VISTA — resumen de workspace (equivalente SQL de Workspace.tareasCount)
 -- ============================================================================
 CREATE VIEW vw_workspace_resumen AS
 SELECT
@@ -295,11 +409,11 @@ GROUP BY w.id;
 
 
 -- ============================================================================
--- 13. TRIGGERS
+-- 15. TRIGGERS
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
--- 13.1 Límite de WIP — hoy en Dart se valida por separado en 4 puntos de
+-- 15.1 Límite de WIP — hoy en Dart se valida por separado en 4 puntos de
 -- entrada (arrastrar tarjeta, mover en lote, botón Iniciar/Reabrir, crear
 -- tarea nueva). A nivel de base de datos se centraliza en un único trigger:
 -- cualquier INSERT/UPDATE que deje una tarea en una columna con
@@ -346,7 +460,7 @@ CREATE TRIGGER trg_validar_wip_tarea
   EXECUTE FUNCTION fn_validar_wip_tarea();
 
 -- ---------------------------------------------------------------------------
--- 13.2 Estampado de fechas reales (fecha_inicio_real / fecha_fin_real) y
+-- 15.2 Estampado de fechas reales (fecha_inicio_real / fecha_fin_real) y
 -- limpieza de fecha_fin_real al reabrir una tarea cerrada (sin esto, el
 -- banner "Terminado el... a las..." se queda pegado tras reabrir).
 -- ---------------------------------------------------------------------------
@@ -382,7 +496,7 @@ CREATE TRIGGER trg_estampar_fechas_reales
   EXECUTE FUNCTION fn_estampar_fechas_reales();
 
 -- ---------------------------------------------------------------------------
--- 13.3 Auto-pausa por subtarea bloqueante: cuando una actividad (a
+-- 15.3 Auto-pausa por subtarea bloqueante: cuando una actividad (a
 -- cualquier profundidad del árbol) tiene responsable asignado y sigue sin
 -- terminarse, la tarea se pausa sola; al resolverse la última bloqueante,
 -- regresa a su estatus previo. Es independiente de una pausa manual (esa
@@ -438,7 +552,7 @@ CREATE TRIGGER trg_recalcular_bloqueo_subtareas
   EXECUTE FUNCTION fn_recalcular_bloqueo_subtareas();
 
 -- ---------------------------------------------------------------------------
--- 13.4 Historial automático — nunca se escribe a mano desde la aplicación.
+-- 15.4 Historial automático — nunca se escribe a mano desde la aplicación.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fn_historial_cambio_tarea() RETURNS TRIGGER AS $$
 BEGIN
@@ -486,7 +600,7 @@ CREATE TRIGGER trg_historial_actividad
   EXECUTE FUNCTION fn_historial_actividad();
 
 -- ---------------------------------------------------------------------------
--- 13.5 Evitar dependencias circulares en el Gantt (A depende de B que
+-- 15.5 Evitar dependencias circulares en el Gantt (A depende de B que
 -- depende de A) antes de insertarlas.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fn_prevenir_dependencia_circular() RETURNS TRIGGER AS $$
@@ -517,14 +631,85 @@ CREATE TRIGGER trg_prevenir_dependencia_circular
   FOR EACH ROW
   EXECUTE FUNCTION fn_prevenir_dependencia_circular();
 
+-- ---------------------------------------------------------------------------
+-- 15.6 Propagar cambios de una etiqueta PERSONAL a todas sus copias locales
+-- ligadas (ver la nota larga de la sección 7.1) — así renombrar/recolorear
+-- desde el catálogo personal se refleja solo en cada workspace donde ya se
+-- había compartido, sin ir uno por uno.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fn_propagar_etiqueta_personal() RETURNS TRIGGER AS $$
+BEGIN
+  IF OLD.nombre IS DISTINCT FROM NEW.nombre
+     OR OLD.color_hex IS DISTINCT FROM NEW.color_hex THEN
+    UPDATE tarea_etiqueta
+    SET nombre = NEW.nombre, color_hex = NEW.color_hex
+    WHERE usuario_etiqueta_id = NEW.id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_propagar_etiqueta_personal
+  AFTER UPDATE ON usuario_etiqueta
+  FOR EACH ROW
+  EXECUTE FUNCTION fn_propagar_etiqueta_personal();
+
+-- ---------------------------------------------------------------------------
+-- 15.7 Un 'invitado' puede APLICAR etiquetas ya existentes a sus tareas,
+-- pero no administrar el catálogo (crear/renombrar/eliminar) de un
+-- workspace al que solo pertenece de forma limitada — ver la nota larga de
+-- la sección 7.1. `app.usuario_actual_id` es el equivalente en id de la
+-- sesión simulada al `app.usuario_actual` (nombre) que ya usan los
+-- triggers de historial.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fn_bloquear_catalogo_invitado() RETURNS TRIGGER AS $$
+DECLARE
+  v_workspace_id BIGINT;
+  -- NULLIF antes del cast: `current_setting(..., true)` sin la variable
+  -- fijada puede devolver cadena vacía en vez de NULL según la sesión, y
+  -- '' ::BIGINT truena en vez de dar NULL.
+  v_usuario_id   BIGINT := NULLIF(current_setting('app.usuario_actual_id', true), '')::BIGINT;
+  v_rol          VARCHAR(20);
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    v_workspace_id := OLD.workspace_id;
+  ELSE
+    v_workspace_id := NEW.workspace_id;
+  END IF;
+
+  -- Sin sesión (p. ej. una migración de datos o sp_crear_tarea_desde_plantilla
+  -- corriendo por su cuenta) no hay quién sea "invitado", así que no restringe.
+  IF v_usuario_id IS NOT NULL THEN
+    SELECT rol INTO v_rol
+    FROM miembro
+    WHERE workspace_id = v_workspace_id AND usuario_id = v_usuario_id;
+
+    IF v_rol = 'invitado' THEN
+      RAISE EXCEPTION 'Un invitado no puede administrar el catálogo de etiquetas de este workspace.'
+        USING ERRCODE = 'insufficient_privilege';
+    END IF;
+  END IF;
+
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_bloquear_catalogo_invitado
+  BEFORE INSERT OR UPDATE OR DELETE ON tarea_etiqueta
+  FOR EACH ROW
+  EXECUTE FUNCTION fn_bloquear_catalogo_invitado();
+
 
 -- ============================================================================
--- 14. PROCEDIMIENTOS ALMACENADOS
+-- 16. PROCEDIMIENTOS ALMACENADOS
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
--- 14.1 sp_mover_tarea — equivalente a KanbanRepository.moverTarea: reordena
--- dentro de la columna destino; los triggers de la sección 14 validan WIP,
+-- 16.1 sp_mover_tarea — equivalente a KanbanRepository.moverTarea: reordena
+-- dentro de la columna destino; los triggers de la sección 15 validan WIP,
 -- estampan fechas reales y registran historial automáticamente.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE sp_mover_tarea(
@@ -549,7 +734,7 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- 14.2 fn_progreso_tarea — % de actividades terminadas (recursivo, incluye
+-- 16.2 fn_progreso_tarea — % de actividades terminadas (recursivo, incluye
 -- subActividades a cualquier profundidad) — espeja el getter Tarea.progreso.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fn_progreso_tarea(p_tarea_id BIGINT)
@@ -568,7 +753,7 @@ RETURNS NUMERIC LANGUAGE sql AS $$
 $$;
 
 -- ---------------------------------------------------------------------------
--- 14.3 sp_actualizar_tarea_cascada — al mover la fecha de vencimiento de
+-- 16.3 sp_actualizar_tarea_cascada — al mover la fecha de vencimiento de
 -- una tarea, empuja la misma diferencia de tiempo a sus sucesoras (tareas
 -- cuyo dependeDeIds la incluye) y devuelve cuántas tocó — igual que el
 -- comentario de KanbanRepository.actualizarTarea describe para el Gantt.
@@ -607,7 +792,7 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- 14.4 sp_crear_tarea_desde_plantilla — clona una TareaPlantilla en una
+-- 16.4 sp_crear_tarea_desde_plantilla — clona una TareaPlantilla en una
 -- tarea nueva (checklist, etiquetas y miembros sugeridos incluidos). El
 -- INSERT en `tarea` ya dispara trg_validar_wip_tarea, así que crear desde
 -- plantilla respeta el límite de WIP igual que crear una tarea a mano.
@@ -649,16 +834,20 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- 14.5 sp_crear_workspace — inserta el área de trabajo + sus 5 columnas
--- estándar, con el mismo título/color/límite que siembra kColumnas
--- (kanban_constants.dart) para cada área nueva.
+-- 16.5 sp_crear_workspace — inserta el área de trabajo + sus 5 columnas
+-- estándar (mismo título/color/límite que siembra kColumnas en
+-- kanban_constants.dart) y agrega automáticamente a quien la crea como su
+-- 'dueño' — sin esto, alguien podía crear un área y quedar sin membresía
+-- (y por lo tanto invisible) en su propio selector de áreas.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION sp_crear_workspace(
-  p_nombre    VARCHAR(120),
-  p_color_hex CHAR(7)
+  p_nombre           VARCHAR(120),
+  p_color_hex        CHAR(7),
+  p_creador_usuario_id BIGINT DEFAULT NULL
 ) RETURNS BIGINT LANGUAGE plpgsql AS $$
 DECLARE
   v_workspace_id BIGINT;
+  v_creador      usuario%ROWTYPE;
 BEGIN
   INSERT INTO workspace (nombre, color_hex) VALUES (p_nombre, p_color_hex)
   RETURNING id INTO v_workspace_id;
@@ -672,6 +861,91 @@ BEGIN
     (v_workspace_id, 'terminado', 'TERMINADO',  'bookmark_rounded', '#17A2B8', NULL, 4),
     (v_workspace_id, 'revisado',  'REVISADO',   'bookmark_rounded', '#28A745', NULL, 5);
 
+  IF p_creador_usuario_id IS NOT NULL THEN
+    SELECT * INTO v_creador FROM usuario WHERE id = p_creador_usuario_id;
+    INSERT INTO miembro (workspace_id, nombre, color_avatar_hex, usuario_id, rol)
+    VALUES (v_workspace_id, v_creador.nombre, v_creador.color_avatar_hex, v_creador.id, 'dueño');
+  END IF;
+
   RETURN v_workspace_id;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 16.6 sp_crear_etiqueta_personal — crea (o reutiliza, si el nombre ya
+-- existe en su catálogo) una etiqueta PERSONAL del usuario y la propaga
+-- como copia local a cada workspace donde ya es 'dueño' o 'miembro' pleno
+-- — NUNCA a uno donde es 'invitado' (ver la nota larga de la sección 7.1).
+-- Es idempotente: volver a llamarla no duplica copias ya existentes.
+--
+-- Colisión de nombre: si el workspace destino YA tiene una etiqueta local
+-- sin vincular con el mismo nombre (sin importar mayúsculas/minúsculas),
+-- no se crea una segunda — esa etiqueta existente se ADOPTA (se liga al
+-- catálogo personal y toma su color) en vez de dejar dos etiquetas con el
+-- mismo nombre en el mismo tablero. Si dos nombres iguales de verdad
+-- significan cosas distintas para cada quien, la persona dueña de ese
+-- workspace puede desvincularla después (usuario_etiqueta_id → NULL) y
+-- renombrar la que corresponda.
+--
+-- Para "solo en esta área" no hace falta procedimiento — es un INSERT
+-- normal en tarea_etiqueta con usuario_etiqueta_id en NULL, igual que hoy.
+--
+-- Cambios de rol: pasar de 'invitado' a 'miembro' no vincula
+-- retroactivamente nada — la próxima vez que la persona use "todas mis
+-- áreas" para una etiqueta (nueva o existente), ese workspace ya cuenta.
+-- Pasar de 'miembro' a 'invitado' tampoco desvincula lo ya propagado: las
+-- copias locales siguen funcionando como etiquetas normales de ese
+-- workspace (trg_bloquear_catalogo_invitado ya le impide seguir
+-- administrando el catálogo desde ese momento, que es lo que importa) —
+-- mismo criterio de "no borrar en cascada" que ya se usa en el resto del
+-- esquema (ver ON DELETE SET NULL de usuario_etiqueta_id).
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION sp_crear_etiqueta_personal(
+  p_usuario_id BIGINT,
+  p_nombre     VARCHAR(60),
+  p_color_hex  CHAR(7)
+) RETURNS BIGINT LANGUAGE plpgsql AS $$
+DECLARE
+  v_usuario_etiqueta_id BIGINT;
+  v_workspace_id        BIGINT;
+  v_local_id            BIGINT;
+BEGIN
+  INSERT INTO usuario_etiqueta (usuario_id, nombre, color_hex)
+  VALUES (p_usuario_id, p_nombre, p_color_hex)
+  ON CONFLICT (usuario_id, nombre) DO UPDATE SET color_hex = EXCLUDED.color_hex
+  RETURNING id INTO v_usuario_etiqueta_id;
+
+  FOR v_workspace_id IN
+    SELECT m.workspace_id FROM miembro m
+    WHERE m.usuario_id = p_usuario_id AND m.rol IN ('dueño', 'miembro')
+  LOOP
+    -- Ya propagada aquí en una llamada anterior: nada que hacer.
+    PERFORM 1 FROM tarea_etiqueta
+    WHERE workspace_id = v_workspace_id AND usuario_etiqueta_id = v_usuario_etiqueta_id;
+    IF FOUND THEN
+      CONTINUE;
+    END IF;
+
+    -- ¿Existe ya una etiqueta local con este nombre, sin vincular? Se
+    -- adopta en vez de duplicar (ver el comentario de la función).
+    SELECT id INTO v_local_id
+    FROM tarea_etiqueta
+    WHERE workspace_id = v_workspace_id
+      AND lower(nombre) = lower(p_nombre)
+      AND usuario_etiqueta_id IS NULL
+    LIMIT 1;
+
+    IF v_local_id IS NOT NULL THEN
+      UPDATE tarea_etiqueta
+      SET usuario_etiqueta_id = v_usuario_etiqueta_id,
+          color_hex = p_color_hex
+      WHERE id = v_local_id;
+    ELSE
+      INSERT INTO tarea_etiqueta (workspace_id, nombre, color_hex, usuario_etiqueta_id)
+      VALUES (v_workspace_id, p_nombre, p_color_hex, v_usuario_etiqueta_id);
+    END IF;
+  END LOOP;
+
+  RETURN v_usuario_etiqueta_id;
 END;
 $$;

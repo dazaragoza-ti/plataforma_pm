@@ -211,11 +211,17 @@ class ColorWheelTriggerButton extends StatelessWidget {
   final ValueChanged<Color> onChanged;
   final String titulo;
 
+  /// Si no es `null`, el diálogo muestra un botón "Quitar color" que lo
+  /// invoca en vez de elegir un color — para los casos donde el color es
+  /// opcional (p. ej. portada de tarjeta).
+  final VoidCallback? onQuitarColor;
+
   const ColorWheelTriggerButton({
     super.key,
     required this.color,
     required this.onChanged,
     this.titulo = 'Elige un color',
+    this.onQuitarColor,
   });
 
   @override
@@ -226,6 +232,7 @@ class ColorWheelTriggerButton extends StatelessWidget {
           context,
           initial: color,
           titulo: titulo,
+          onQuitarColor: onQuitarColor,
         );
         if (elegido != null) onChanged(elegido);
       },
@@ -257,6 +264,7 @@ Future<Color?> showColorWheelDialog(
   BuildContext context, {
   required Color initial,
   String titulo = 'Elige un color',
+  VoidCallback? onQuitarColor,
 }) {
   var elegido = initial;
   return showDialog<Color>(
@@ -270,6 +278,17 @@ Future<Color?> showColorWheelDialog(
         onColorChanged: (c) => elegido = c,
       ),
       actions: [
+        if (onQuitarColor != null)
+          TextButton(
+            onPressed: () {
+              onQuitarColor();
+              Navigator.of(ctx).pop();
+            },
+            child: Text(
+              'Quitar color',
+              style: TextStyle(color: KanbanColors.danger),
+            ),
+          ),
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(),
           child: const Text('Cancelar'),

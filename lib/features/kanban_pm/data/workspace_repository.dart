@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../domain/entities/workspace.dart';
 import '../kanban_constants.dart';
 import 'kanban_repository.dart';
+import 'usuario_directorio.dart';
 
 /// Catálogo de áreas de trabajo — cada una es un tablero Kanban completo e
 /// independiente. Diseño análogo a [KanbanRepository]: pensado para que el
@@ -10,7 +11,21 @@ import 'kanban_repository.dart';
 abstract class WorkspaceRepository {
   Future<List<Workspace>> listarWorkspaces();
 
-  Future<Workspace> crearWorkspace(String nombre, Color color);
+  /// Solo las áreas donde [usuarioId] tiene membresía — algún [Miembro] de
+  /// su catálogo ligado a ese usuario del directorio global (ver
+  /// [Miembro.usuarioId]). Es lo que ve una persona en su selector: no
+  /// todo lo que existe, solo aquello a lo que pertenece (aunque sea como
+  /// invitada, por estar asignada a una sola actividad).
+  Future<List<Workspace>> listarWorkspacesDe(String usuarioId);
+
+  /// [creadorUsuarioId] agrega automáticamente a quien crea el área como
+  /// su primer miembro — sin esto, alguien podía crear un área de trabajo
+  /// y quedar sin membresía en ella, invisible en su propio selector.
+  Future<Workspace> crearWorkspace(
+    String nombre,
+    Color color, {
+    String? creadorUsuarioId,
+  });
 
   Future<void> renombrarWorkspace(String id, String nuevoNombre);
 
@@ -72,7 +87,24 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
   }
 
   @override
-  Future<Workspace> crearWorkspace(String nombre, Color color) async {
+  Future<List<Workspace>> listarWorkspacesDe(String usuarioId) async {
+    final todas = await listarWorkspaces();
+    final resultado = <Workspace>[];
+    for (final w in todas) {
+      final miembros = await _repos[w.id]!.listarMiembros();
+      if (miembros.any((m) => m.usuarioId == usuarioId)) {
+        resultado.add(w);
+      }
+    }
+    return List.unmodifiable(resultado);
+  }
+
+  @override
+  Future<Workspace> crearWorkspace(
+    String nombre,
+    Color color, {
+    String? creadorUsuarioId,
+  }) async {
     await _latencia();
     final id = 'ws_${_nextId++}';
     final workspace = Workspace(
@@ -82,7 +114,16 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
       fechaCreacion: DateTime.now(),
     );
     _workspaces.add(workspace);
-    _repos[id] = InMemoryKanbanRepository(conDatosDemo: false);
+    final repo = InMemoryKanbanRepository(conDatosDemo: false);
+    _repos[id] = repo;
+    if (creadorUsuarioId != null) {
+      final creador = UsuarioDirectorio.instancia.porId(creadorUsuarioId);
+      await repo.crearMiembro(
+        creador.nombre,
+        creador.colorAvatar,
+        usuarioId: creador.id,
+      );
+    }
     return workspace;
   }
 

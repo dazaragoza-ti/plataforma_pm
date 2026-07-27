@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../data/workspace_repository.dart';
 import '../../../domain/entities/workspace.dart';
 import '../../../kanban_constants.dart' show KanbanColors, kColorPaletteEtiquetas;
+import '../../../data/usuario_directorio.dart';
 import '../common/color_wheel_picker.dart';
 
 /// Diálogo para crear una nueva área de trabajo: nombre + color (para
@@ -102,6 +103,10 @@ class NuevaWorkspaceDialog {
       ),
     );
     if (resultado == null || resultado.$1.trim().isEmpty) return null;
-    return repository.crearWorkspace(resultado.$1, resultado.$2);
+    return repository.crearWorkspace(
+      resultado.$1,
+      resultado.$2,
+      creadorUsuarioId: usuarioActual.value.id,
+    );
   }
 }

@@ -75,6 +75,11 @@ class InMemoryKanbanRepository implements KanbanRepository {
           nombre: nombre,
           colorAvatar:
               kColorPaletteEtiquetas[(id - 1) % kColorPaletteEtiquetas.length],
+          // `kIntegrantesDemo` y `UsuarioDirectorio` son los mismos 5
+          // nombres en el mismo orden — así el tablero de ejemplo ya
+          // arranca con sus miembros ligados a personas reales del
+          // directorio en vez de sueltos.
+          usuarioId: 'u$id',
         ),
       );
     }
@@ -798,6 +803,17 @@ class InMemoryKanbanRepository implements KanbanRepository {
     }
   }
 
+  @override
+  Future<void> registrarNotaPausa(int tareaId, String nota) async {
+    await _latencia();
+    if (nota.trim().isEmpty) return;
+    // El prefijo `Pausó:` es lo que usa la vista Lista para encontrar la
+    // nota más reciente entre las entradas del historial (ver
+    // `kanban_lista_view.dart`) — no es una lista aparte, así que cada
+    // pausa deja su propio registro con fecha en vez de pisar al anterior.
+    _registrarHistorial(tareaId, 'Pausó: "${nota.trim()}"');
+  }
+
   /// Recorre el árbol de [lista] buscando la actividad con [id] y devuelve
   /// una copia del árbol con esa actividad reemplazada por
   /// `transformar(actividad)` — el resto del árbol (hermanas, ancestros,
@@ -1056,11 +1072,20 @@ class InMemoryKanbanRepository implements KanbanRepository {
   }
 
   @override
-  Future<int> crearMiembro(String nombre, Color colorAvatar) async {
+  Future<int> crearMiembro(
+    String nombre,
+    Color colorAvatar, {
+    String? usuarioId,
+  }) async {
     await _latencia();
     final id = _nextMiembroId++;
     _miembros.add(
-      Miembro(id: id, nombre: nombre.trim(), colorAvatar: colorAvatar),
+      Miembro(
+        id: id,
+        nombre: nombre.trim(),
+        colorAvatar: colorAvatar,
+        usuarioId: usuarioId,
+      ),
     );
     return id;
   }

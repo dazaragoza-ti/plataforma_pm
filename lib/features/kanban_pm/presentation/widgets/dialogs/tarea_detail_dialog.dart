@@ -4,7 +4,9 @@ import '../../../data/kanban_repository.dart';
 import '../../../domain/entities/actividad.dart';
 import '../../../domain/entities/miembro.dart';
 import '../../../domain/entities/tarea.dart';
+import '../../../data/usuario_directorio.dart';
 import '../../../domain/entities/tarea_etiqueta.dart';
+import '../../../domain/entities/usuario.dart';
 import '../common/color_wheel_picker.dart';
 import 'actividad_fechas_dialog.dart';
 import 'pausar_tarea_dialog.dart';
@@ -196,6 +198,32 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     });
   }
 
+  /// Agrega a [usuario] (alguien del directorio global, típicamente de
+  /// otra área de trabajo) al catálogo de miembros de ESTA tarea — a
+  /// diferencia de [_crearMiembro], liga el registro nuevo a su
+  /// [Usuario.id] (ver [Miembro.usuarioId]), así que esta área le
+  /// aparece en su selector aunque no sea "de su departamento".
+  Future<void> _agregarDeDirectorio(Usuario usuario) async {
+    final id = await widget.repository.crearMiembro(
+      usuario.nombre,
+      usuario.colorAvatar,
+      usuarioId: usuario.id,
+    );
+    if (!mounted) return;
+    setState(() {
+      _catalogoMiembros = [
+        ..._catalogoMiembros,
+        Miembro(
+          id: id,
+          nombre: usuario.nombre,
+          colorAvatar: usuario.colorAvatar,
+          usuarioId: usuario.id,
+        ),
+      ];
+      _miembroIdsSeleccionados.add(id);
+    });
+  }
+
   /// Lista desplegable con el catálogo completo del tablero para marcar/
   /// desmarcar miembros de la tarea, en vez de una fila de chips siempre
   /// visible — el cambio queda en `_miembroIdsSeleccionados` (estado local
@@ -260,6 +288,78 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                     ),
                   ),
                 const SizedBox(height: 8),
+                Builder(
+                  builder: (context) {
+                    // Gente del directorio global que ya existe (en otra
+                    // área) pero todavía no en el catálogo de esta —
+                    // agregarla de aquí es lo que la hace "invitada" de
+                    // esta área: su Miembro nuevo queda ligado al mismo
+                    // Usuario, así que le aparece en su selector.
+                    final disponibles = UsuarioDirectorio.instancia
+                        .listar()
+                        .where(
+                          (u) => !_catalogoMiembros.any(
+                            (m) => m.usuarioId == u.id,
+                          ),
+                        )
+                        .toList();
+                    if (disponibles.isEmpty) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'AGREGAR DE OTRA ÁREA',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.3,
+                              color: KanbanColors.tdim,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              for (final u in disponibles)
+                                ActionChip(
+                                  avatar: CircleAvatar(
+                                    radius: 10,
+                                    backgroundColor: u.colorAvatar,
+                                    child: Text(
+                                      u.nombre.isNotEmpty
+                                          ? u.nombre[0].toUpperCase()
+                                          : '?',
+                                      style: const TextStyle(
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                  label: Text(
+                                    u.nombre,
+                                    style: TextStyle(
+                                      fontSize: 11.5,
+                                      color: KanbanColors.texto,
+                                    ),
+                                  ),
+                                  backgroundColor: KanbanColors.bg3,
+                                  side: BorderSide(color: KanbanColors.borde),
+                                  onPressed: () async {
+                                    await _agregarDeDirectorio(u);
+                                    setDialogState(() {});
+                                  },
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
                 if (_creandoMiembro) ...[
                   Row(
                     children: [
@@ -1365,45 +1465,21 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                           ],
                           const SizedBox(height: 16),
                           _seccionLabel('Portada'),
-                          Row(
-                            children: [
-                              InkWell(
-                                onTap: () => setState(() => _portada = null),
-                                child: Container(
-                                  width: 26,
-                                  height: 26,
-                                  decoration: BoxDecoration(
-                                    color: KanbanColors.bg3,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: _portada == null
-                                          ? KanbanColors.texto
-                                          : KanbanColors.borde,
-                                      width: _portada == null ? 2 : 1,
-                                    ),
-                                  ),
-                                  child: Icon(
-                                    Icons.close_rounded,
-                                    size: 14,
-                                    color: KanbanColors.tdim,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              _botonColorRueda(
-                                color: _portada ?? KanbanColors.bg3,
-                                onTap: () async {
-                                  final elegido = await showColorWheelDialog(
-                                    context,
-                                    initial: _portada ?? KanbanColors.accent,
-                                    titulo: 'Color de portada',
-                                  );
-                                  if (elegido != null) {
-                                    setState(() => _portada = elegido);
-                                  }
-                                },
-                              ),
-                            ],
+                          _botonColorRueda(
+                            color: _portada ?? KanbanColors.bg3,
+                            onTap: () async {
+                              final elegido = await showColorWheelDialog(
+                                context,
+                                initial: _portada ?? KanbanColors.accent,
+                                titulo: 'Color de portada',
+                                onQuitarColor: _portada == null
+                                    ? null
+                                    : () => setState(() => _portada = null),
+                              );
+                              if (elegido != null) {
+                                setState(() => _portada = elegido);
+                              }
+                            },
                           ),
                           const SizedBox(height: 14),
                           _seccionLabel('Área'),

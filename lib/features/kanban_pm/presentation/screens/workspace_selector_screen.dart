@@ -4,7 +4,9 @@ import 'package:flutter/foundation.dart'
     show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 
+import '../../data/usuario_directorio.dart';
 import '../../data/workspace_repository.dart';
+import '../../domain/entities/usuario.dart';
 import '../../domain/entities/workspace.dart';
 import '../../kanban_constants.dart';
 import '../widgets/common/color_wheel_picker.dart';
@@ -45,11 +47,22 @@ class _WorkspaceSelectorScreenState extends State<WorkspaceSelectorScreen> {
   @override
   void initState() {
     super.initState();
+    // Cambiar de "usuario actual" (ver el switcher del encabezado) debe
+    // refrescar sola la lista — sin este listener, el selector se quedaba
+    // mostrando las áreas de la persona anterior hasta la próxima recarga
+    // completa de la pantalla.
+    usuarioActual.addListener(_cargar);
     _cargar();
   }
 
+  @override
+  void dispose() {
+    usuarioActual.removeListener(_cargar);
+    super.dispose();
+  }
+
   Future<void> _cargar() async {
-    final workspaces = await _repo.listarWorkspaces();
+    final workspaces = await _repo.listarWorkspacesDe(usuarioActual.value.id);
     if (!mounted) return;
     setState(() {
       _workspaces = workspaces;
@@ -346,8 +359,103 @@ class _WorkspaceSelectorScreenState extends State<WorkspaceSelectorScreen> {
               ],
             ),
           ),
+          const SizedBox(width: 12),
+          _selectorUsuario(),
         ],
       ),
+    );
+  }
+
+  /// Simula "quién está usando la app" mientras no hay login real — cambiar
+  /// aquí de persona recarga sola el selector (ver el listener en
+  /// [initState]) para poder probar cómo se ve el filtrado por membresía
+  /// entre varias personas sin necesitar autenticación de verdad.
+  Widget _selectorUsuario() {
+    return ValueListenableBuilder<Usuario>(
+      valueListenable: usuarioActual,
+      builder: (context, actual, _) {
+        return PopupMenuButton<Usuario>(
+          tooltip: 'Cambiar de persona (simulado)',
+          color: KanbanColors.bg2,
+          onSelected: (u) => usuarioActual.value = u,
+          itemBuilder: (context) => [
+            for (final u in UsuarioDirectorio.instancia.listar())
+              PopupMenuItem(
+                value: u,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircleAvatar(
+                      radius: 11,
+                      backgroundColor: u.colorAvatar,
+                      child: Text(
+                        u.nombre.isNotEmpty ? u.nombre[0].toUpperCase() : '?',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      u.nombre,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: KanbanColors.texto,
+                        fontWeight: u.id == actual.id
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: KanbanColors.bg3,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: KanbanColors.borde),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircleAvatar(
+                  radius: 11,
+                  backgroundColor: actual.colorAvatar,
+                  child: Text(
+                    actual.nombre.isNotEmpty
+                        ? actual.nombre[0].toUpperCase()
+                        : '?',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  actual.nombre,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: KanbanColors.texto,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  Icons.expand_more_rounded,
+                  size: 16,
+                  color: KanbanColors.tdim,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

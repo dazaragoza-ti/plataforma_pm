@@ -556,6 +556,10 @@ class _KanbanListaViewState extends State<KanbanListaView> {
                 const SizedBox(height: 10),
                 _celdaProgreso(t),
               ],
+              if (_notaPausaReciente(t) != null) ...[
+                const SizedBox(height: 10),
+                _celdaNotaPausa(_notaPausaReciente(t)!),
+              ],
               const SizedBox(height: 10),
               Row(
                 children: [
@@ -887,17 +891,52 @@ class _KanbanListaViewState extends State<KanbanListaView> {
   }
 
   Widget _celdaTitulo(Tarea t) {
+    final nota = _notaPausaReciente(t);
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 260),
-      child: Text(
-        t.titulo,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontSize: 12.5,
-          fontWeight: FontWeight.w600,
-          color: KanbanColors.texto,
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            t.titulo,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: KanbanColors.texto,
+            ),
+          ),
+          // Motivo de la última pausa, visible sin tener que abrir la
+          // tarjeta — en la tabla no hay espacio para la caja completa que
+          // usa la tarjeta apilada de celular, así que va como subtítulo.
+          if (nota != null) ...[
+            const SizedBox(height: 2),
+            Row(
+              children: [
+                Icon(
+                  Icons.pause_circle_outline_rounded,
+                  size: 11,
+                  color: KanbanColors.tdim,
+                ),
+                const SizedBox(width: 3),
+                Expanded(
+                  child: Text(
+                    nota,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontStyle: FontStyle.italic,
+                      color: KanbanColors.tdim,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -988,4 +1027,47 @@ class _KanbanListaViewState extends State<KanbanListaView> {
     );
   }
 
+  /// Texto de la nota más reciente entre las entradas de historial que
+  /// `registrarNotaPausa` fue dejando (una por cada vez que se pausó la
+  /// tarea con un motivo escrito) — recorre de más nueva a más vieja y se
+  /// queda con la primera que encuentra.
+  String? _notaPausaReciente(Tarea t) {
+    const prefijo = 'Pausó: ';
+    for (var i = t.historial.length - 1; i >= 0; i--) {
+      final mensaje = t.historial[i].mensaje;
+      if (mensaje.startsWith(prefijo)) {
+        return mensaje.substring(prefijo.length);
+      }
+    }
+    return null;
+  }
+
+  Widget _celdaNotaPausa(String nota) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: KanbanColors.bg3,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.pause_circle_outline_rounded,
+            size: 13,
+            color: KanbanColors.tdim,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              nota,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11.5, color: KanbanColors.tdim),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

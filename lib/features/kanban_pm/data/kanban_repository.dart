@@ -61,6 +61,13 @@ abstract class KanbanRepository {
     DateTime? fechaFin,
   });
 
+  /// Registra en el historial de [tareaId] el motivo que la persona escribió
+  /// al pausarla — se guarda como una entrada más de [Tarea.historial] (no
+  /// como un comentario aparte) para que, si la tarea se pausa varias
+  /// veces, cada nota quede su propio registro con fecha en vez de
+  /// pisarse entre sí.
+  Future<void> registrarNotaPausa(int tareaId, String nota);
+
   // Columnas (listas) del tablero.
   Future<List<KanbanColumna>> listarColumnas();
 
@@ -94,7 +101,15 @@ abstract class KanbanRepository {
   // Miembros (personas) del tablero.
   Future<List<Miembro>> listarMiembros();
 
-  Future<int> crearMiembro(String nombre, Color colorAvatar);
+  /// [usuarioId] liga el nuevo miembro con una persona del directorio
+  /// global (ver [Miembro.usuarioId]) — se manda al elegir a alguien que
+  /// ya existe en otra área en vez de escribir un nombre nuevo; `null`
+  /// crea un miembro que solo existe en esta área.
+  Future<int> crearMiembro(
+    String nombre,
+    Color colorAvatar, {
+    String? usuarioId,
+  });
 
   Future<void> actualizarMiembro(Miembro miembro);
 
