@@ -43,8 +43,6 @@ class KanbanColumnView extends StatefulWidget {
   onReordenar;
   final void Function(String nuevoTitulo) onRenombrar;
   final VoidCallback onArchivarColumna;
-  final VoidCallback? onMoverIzquierda;
-  final VoidCallback? onMoverDerecha;
   final void Function(Tarea tarea) onArchivarTarjeta;
   final void Function(Tarea tarea) onEliminarTarjeta;
   final void Function(Offset globalPos)? onArrastreGlobalHorizontal;
@@ -61,8 +59,6 @@ class KanbanColumnView extends StatefulWidget {
     required this.onReordenar,
     required this.onRenombrar,
     required this.onArchivarColumna,
-    this.onMoverIzquierda,
-    this.onMoverDerecha,
     required this.onArchivarTarjeta,
     required this.onEliminarTarjeta,
     this.onArrastreGlobalHorizontal,
@@ -77,6 +73,7 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
   final _scrollCtrl = ScrollController();
   final _tituloCtrl = TextEditingController();
   bool _editandoTitulo = false;
+  bool _arrastrandoColumna = false;
   Timer? _autoscrollTimer;
   double? _autoscrollDireccion;
 
@@ -267,6 +264,86 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
     );
   }
 
+  /// Vista previa de la columna completa (encabezado + tarjetas) que se
+  /// muestra pegada al dedo/cursor mientras se arrastra una lista, para que
+  /// se perciba como "mover la lista con todo su contenido" y no solo su
+  /// título. Se limita a [_maxTarjetasPreview] tarjetas por rendimiento: con
+  /// listas muy largas no tiene sentido renderizar (ni cargar en el
+  /// `Overlay`) cientos de tarjetas que de todas formas no se ven completas
+  /// mientras se arrastra.
+  static const _maxTarjetasPreview = 8;
+
+  Widget _previewColumna() {
+    final visibles = widget.tareas.take(_maxTarjetasPreview).toList();
+    final restantes = widget.tareas.length - visibles.length;
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        width: widget.ancho,
+        constraints: const BoxConstraints(maxHeight: 520),
+        decoration: BoxDecoration(
+          color: KanbanColors.bg3ConFondo,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: KanbanColors.accent, width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.25),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+              child: _filaTitulo(),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                physics: const NeverScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: Column(
+                  children: [
+                    for (final tarea in visibles)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: KanbanTaskCard(
+                          tarea: tarea,
+                          etiquetas: tarea.etiquetaIds
+                              .map((id) => widget.etiquetasPorId[id])
+                              .whereType<TareaEtiqueta>()
+                              .toList(),
+                          miembros: tarea.miembroIds
+                              .map((id) => widget.miembrosPorId[id])
+                              .whereType<Miembro>()
+                              .toList(),
+                          onTap: () {},
+                        ),
+                      ),
+                    if (restantes > 0)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Text(
+                          '+$restantes más',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: KanbanColors.tdim,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// Título de la columna arrastrable para reordenar listas completas. En
   /// móvil se usa `LongPressDraggable` en vez de `Draggable`: si el swipe
   /// para deslizar entre columnas (ver [KanbanColumnView.ancho]) empieza
@@ -274,45 +351,35 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
   /// gesto al scroll horizontal del tablero y "secuestra" el swipe para
   /// arrastrar la columna entera. En desktop se deja el `Draggable`
   /// normal, que parte de un click+mantener del mouse sin ese conflicto.
+  ///
+  /// El `feedback` es la columna entera (ver [_previewColumna]), no solo el
+  /// título: así se percibe que se mueve la lista con todo su contenido. El
+  /// disparador del arrastre sigue siendo el título (no toda la columna)
+  /// para no competir con el `Draggable<Tarea>` de cada tarjeta ni con el
+  /// scroll vertical de la lista.
   Widget _tituloArrastrable() {
-    final feedback = Material(
-      color: Colors.transparent,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: KanbanColors.bg2,
-          borderRadius: BorderRadius.circular(6),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.15),
-              blurRadius: 6,
-            ),
-          ],
-        ),
-        child: Text(
-          widget.columna.titulo,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-            color: KanbanColors.texto,
-          ),
-        ),
-      ),
-    );
     final childWhenDragging = Opacity(opacity: 0.3, child: _filaTitulo());
     final child = InkWell(onTap: _iniciarEdicionTitulo, child: _filaTitulo());
     final esMovil = MediaQuery.sizeOf(context).width < 600;
+    void onDragStarted() => setState(() => _arrastrandoColumna = true);
+    void onDragTerminado() => setState(() => _arrastrandoColumna = false);
     return esMovil
         ? LongPressDraggable<KanbanColumna>(
             data: widget.columna,
-            feedback: feedback,
+            feedback: _previewColumna(),
             childWhenDragging: childWhenDragging,
+            onDragStarted: onDragStarted,
+            onDragEnd: (_) => onDragTerminado(),
+            onDraggableCanceled: (_, _) => onDragTerminado(),
             child: child,
           )
         : Draggable<KanbanColumna>(
             data: widget.columna,
-            feedback: feedback,
+            feedback: _previewColumna(),
             childWhenDragging: childWhenDragging,
+            onDragStarted: onDragStarted,
+            onDragEnd: (_) => onDragTerminado(),
+            onDraggableCanceled: (_, _) => onDragTerminado(),
             child: child,
           );
   }
@@ -377,10 +444,6 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
                   _iniciarEdicionTitulo();
                 case 'archivar':
                   widget.onArchivarColumna();
-                case 'izquierda':
-                  widget.onMoverIzquierda?.call();
-                case 'derecha':
-                  widget.onMoverDerecha?.call();
                 case 'limite_wip':
                   _elegirLimiteWip();
               }
@@ -400,22 +463,6 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
               const PopupMenuItem(
                 value: 'archivar',
                 child: Text('Archivar lista', style: TextStyle(fontSize: 12.5)),
-              ),
-              PopupMenuItem(
-                value: 'izquierda',
-                enabled: widget.onMoverIzquierda != null,
-                child: const Text(
-                  'Mover a la izquierda',
-                  style: TextStyle(fontSize: 12.5),
-                ),
-              ),
-              PopupMenuItem(
-                value: 'derecha',
-                enabled: widget.onMoverDerecha != null,
-                child: const Text(
-                  'Mover a la derecha',
-                  style: TextStyle(fontSize: 12.5),
-                ),
               ),
             ],
           ),
@@ -442,47 +489,66 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
         children: [
           _header(),
           Expanded(
-            child: DragTarget<Tarea>(
-              onWillAcceptWithDetails: (_) => true,
-              onAcceptWithDetails: (details) {
-                _detenerAutoscroll();
-                _manejarDrop(details.data, widget.tareas.length);
-              },
-              onMove: (details) {
-                final box = context.findRenderObject() as RenderBox?;
-                if (box == null) return;
-                _manejarAutoscroll(
-                  details.offset,
-                  box.localToGlobal(Offset.zero) & box.size,
-                );
-                widget.onArrastreGlobalHorizontal?.call(details.offset);
-              },
-              onLeave: (_) => _detenerAutoscroll(),
-              builder: (context, candidateData, rejectedData) {
-                return Stack(
-                  children: [
-                    Positioned.fill(
-                      child: Container(
-                        color: candidateData.isNotEmpty
-                            ? KanbanColors.accentLight.withValues(alpha: 0.35)
-                            : Colors.transparent,
+            // Mientras la lista se arrastra (ver [_tituloArrastrable]), el
+            // contenido real viaja en el `feedback` pegado al cursor; acá se
+            // deja solo un hueco visual para no duplicar las tarjetas en dos
+            // sitios a la vez ni competir con sus propios `DragTarget`.
+            child: _arrastrandoColumna
+                ? Container(
+                    margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                    decoration: BoxDecoration(
+                      color: KanbanColors.bg2.withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: KanbanColors.borde,
+                        style: BorderStyle.solid,
                       ),
                     ),
-                    _ListaTarjetas(
-                      scrollController: _scrollCtrl,
-                      tareas: widget.tareas,
-                      etiquetasPorId: widget.etiquetasPorId,
-                      miembrosPorId: widget.miembrosPorId,
-                      gapBuilder: _gap,
-                      onTapTarea: widget.onTapTarea,
-                      onArchivarTarjeta: widget.onArchivarTarjeta,
-                      onEliminarTarjeta: widget.onEliminarTarjeta,
-                      onArrastreHorizontal: widget.onArrastreGlobalHorizontal,
-                    ),
-                  ],
-                );
-              },
-            ),
+                  )
+                : DragTarget<Tarea>(
+                    onWillAcceptWithDetails: (_) => true,
+                    onAcceptWithDetails: (details) {
+                      _detenerAutoscroll();
+                      _manejarDrop(details.data, widget.tareas.length);
+                    },
+                    onMove: (details) {
+                      final box = context.findRenderObject() as RenderBox?;
+                      if (box == null) return;
+                      _manejarAutoscroll(
+                        details.offset,
+                        box.localToGlobal(Offset.zero) & box.size,
+                      );
+                      widget.onArrastreGlobalHorizontal?.call(details.offset);
+                    },
+                    onLeave: (_) => _detenerAutoscroll(),
+                    builder: (context, candidateData, rejectedData) {
+                      return Stack(
+                        children: [
+                          Positioned.fill(
+                            child: Container(
+                              color: candidateData.isNotEmpty
+                                  ? KanbanColors.accentLight.withValues(
+                                      alpha: 0.35,
+                                    )
+                                  : Colors.transparent,
+                            ),
+                          ),
+                          _ListaTarjetas(
+                            scrollController: _scrollCtrl,
+                            tareas: widget.tareas,
+                            etiquetasPorId: widget.etiquetasPorId,
+                            miembrosPorId: widget.miembrosPorId,
+                            gapBuilder: _gap,
+                            onTapTarea: widget.onTapTarea,
+                            onArchivarTarjeta: widget.onArchivarTarjeta,
+                            onEliminarTarjeta: widget.onEliminarTarjeta,
+                            onArrastreHorizontal:
+                                widget.onArrastreGlobalHorizontal,
+                          ),
+                        ],
+                      );
+                    },
+                  ),
           ),
         ],
       ),

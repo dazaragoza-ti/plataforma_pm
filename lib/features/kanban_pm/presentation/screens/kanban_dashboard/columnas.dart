@@ -46,24 +46,6 @@ mixin _KanbanDashboardColumnasMixin on _KanbanDashboardDatosMixin {
     setState(() => _columnas = [..._columnas, columna]);
   }
 
-  Future<void> _moverColumna(TareaEstatus estatus, int direccion) async {
-    final idx = _columnas.indexWhere((c) => c.estatus == estatus);
-    if (idx == -1) return;
-    var otroIdx = idx + direccion;
-    while (otroIdx >= 0 &&
-        otroIdx < _columnas.length &&
-        _columnas[otroIdx].archivada) {
-      otroIdx += direccion;
-    }
-    if (otroIdx < 0 || otroIdx >= _columnas.length) return;
-    final nuevas = List.of(_columnas);
-    final tmp = nuevas[idx];
-    nuevas[idx] = nuevas[otroIdx];
-    nuevas[otroIdx] = tmp;
-    setState(() => _columnas = nuevas);
-    await _repo.reordenarColumnas(nuevas.map((c) => c.estatus).toList());
-  }
-
   void _manejarAutoscrollHorizontal(Offset globalPos) {
     final box = _boardKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) return;

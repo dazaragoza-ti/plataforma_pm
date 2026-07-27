@@ -122,6 +122,7 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen>
                   for (var i = 0; i < visibles.length; i++) ...[
                     _columnaGap(i),
                     SizedBox(
+                      key: ValueKey(visibles[i].estatus),
                       height: constraints.maxHeight,
                       // Aísla el repintado de cada columna: sin esto,
                       // Skia/CanvasKit repinta el tablero completo cada vez
@@ -142,12 +143,6 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen>
                               _renombrarColumna(visibles[i].estatus, nuevo),
                           onArchivarColumna: () =>
                               _archivarColumna(visibles[i].estatus, true),
-                          onMoverIzquierda: i > 0
-                              ? () => _moverColumna(visibles[i].estatus, -1)
-                              : null,
-                          onMoverDerecha: i < visibles.length - 1
-                              ? () => _moverColumna(visibles[i].estatus, 1)
-                              : null,
                           onArchivarTarjeta: _archivarTarjeta,
                           onEliminarTarjeta: _eliminarTarjeta,
                           onArrastreGlobalHorizontal:
