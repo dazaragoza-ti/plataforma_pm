@@ -121,34 +121,39 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen>
                 children: [
                   for (var i = 0; i < visibles.length; i++) ...[
                     _columnaGap(i, constraints.maxHeight),
-                    SizedBox(
+                    _ColumnaDropTarget(
                       key: ValueKey(visibles[i].estatus),
-                      height: constraints.maxHeight,
-                      // Aísla el repintado de cada columna: sin esto,
-                      // Skia/CanvasKit repinta el tablero completo cada vez
-                      // que una sola columna cambia (mover una tarjeta,
-                      // hover de un drag, etc.).
-                      child: RepaintBoundary(
-                        child: KanbanColumnView(
-                          columna: visibles[i],
-                          ancho: anchoColumna,
-                          tareas: _tareas
-                              .where((t) => t.estatus == visibles[i].estatus)
-                              .toList(),
-                          etiquetasPorId: _etiquetasPorId,
-                          miembrosPorId: _miembrosPorId,
-                          onTapTarea: _abrirDetalle,
-                          onReordenar: _moverTarea,
-                          onRenombrar: (nuevo) =>
-                              _renombrarColumna(visibles[i].estatus, nuevo),
-                          onArchivarColumna: () =>
-                              _archivarColumna(visibles[i].estatus, true),
-                          onArchivarTarjeta: _archivarTarjeta,
-                          onEliminarTarjeta: _eliminarTarjeta,
-                          onArrastreGlobalHorizontal:
-                              _manejarAutoscrollHorizontal,
-                          onCambiarLimiteWip: (limite) =>
-                              _cambiarLimiteWip(visibles[i].estatus, limite),
+                      indice: i,
+                      estatusPropio: visibles[i].estatus,
+                      onSoltar: _reordenarColumnaDrag,
+                      child: SizedBox(
+                        height: constraints.maxHeight,
+                        // Aísla el repintado de cada columna: sin esto,
+                        // Skia/CanvasKit repinta el tablero completo cada vez
+                        // que una sola columna cambia (mover una tarjeta,
+                        // hover de un drag, etc.).
+                        child: RepaintBoundary(
+                          child: KanbanColumnView(
+                            columna: visibles[i],
+                            ancho: anchoColumna,
+                            tareas: _tareas
+                                .where((t) => t.estatus == visibles[i].estatus)
+                                .toList(),
+                            etiquetasPorId: _etiquetasPorId,
+                            miembrosPorId: _miembrosPorId,
+                            onTapTarea: _abrirDetalle,
+                            onReordenar: _moverTarea,
+                            onRenombrar: (nuevo) =>
+                                _renombrarColumna(visibles[i].estatus, nuevo),
+                            onArchivarColumna: () =>
+                                _archivarColumna(visibles[i].estatus, true),
+                            onArchivarTarjeta: _archivarTarjeta,
+                            onEliminarTarjeta: _eliminarTarjeta,
+                            onArrastreGlobalHorizontal:
+                                _manejarAutoscrollHorizontal,
+                            onCambiarLimiteWip: (limite) =>
+                                _cambiarLimiteWip(visibles[i].estatus, limite),
+                          ),
                         ),
                       ),
                     ),

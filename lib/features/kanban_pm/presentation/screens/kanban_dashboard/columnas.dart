@@ -149,3 +149,82 @@ mixin _KanbanDashboardColumnasMixin on _KanbanDashboardDatosMixin {
     onDesarchivada: () => _cargar(),
   );
 }
+
+/// Envuelve una columna para que también sea destino de arrastre de otra
+/// lista: [_columnaGap] solo cubre una franja angosta entre columnas, así
+/// que soltar sobre el cuerpo de una columna (mucho más grande) no hacía
+/// nada. Decide "antes" o "después" de esta columna según la mitad
+/// (izquierda/derecha) donde se suelta, delegando el reordenamiento real a
+/// la misma función que ya usa [_columnaGap].
+class _ColumnaDropTarget extends StatefulWidget {
+  final int indice;
+  final TareaEstatus estatusPropio;
+  final void Function(TareaEstatus origenEstatus, int gapIndex) onSoltar;
+  final Widget child;
+
+  const _ColumnaDropTarget({
+    super.key,
+    required this.indice,
+    required this.estatusPropio,
+    required this.onSoltar,
+    required this.child,
+  });
+
+  @override
+  State<_ColumnaDropTarget> createState() => _ColumnaDropTargetState();
+}
+
+class _ColumnaDropTargetState extends State<_ColumnaDropTarget> {
+  bool? _mitadIzquierda;
+
+  void _actualizarMitad(Offset globalPos) {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final local = box.globalToLocal(globalPos);
+    final izquierda = local.dx < box.size.width / 2;
+    if (izquierda != _mitadIzquierda) {
+      setState(() => _mitadIzquierda = izquierda);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DragTarget<KanbanColumna>(
+      onWillAcceptWithDetails: (details) =>
+          details.data.estatus != widget.estatusPropio,
+      onMove: (details) => _actualizarMitad(details.offset),
+      onLeave: (_) => setState(() => _mitadIzquierda = null),
+      onAcceptWithDetails: (details) {
+        final porIzquierda = _mitadIzquierda ?? true;
+        final gapIndex = porIzquierda ? widget.indice : widget.indice + 1;
+        widget.onSoltar(details.data.estatus, gapIndex);
+        setState(() => _mitadIzquierda = null);
+      },
+      builder: (context, candidateData, rejectedData) {
+        final activo = candidateData.isNotEmpty;
+        final porIzquierda = _mitadIzquierda ?? true;
+        return Stack(
+          children: [
+            widget.child,
+            if (activo)
+              Positioned(
+                top: 0,
+                bottom: 0,
+                left: porIzquierda ? 0 : null,
+                right: porIzquierda ? null : 0,
+                child: IgnorePointer(
+                  child: Container(
+                    width: 4,
+                    decoration: BoxDecoration(
+                      color: KanbanColors.accent,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
