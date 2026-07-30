@@ -19,6 +19,16 @@ mixin _KanbanDashboardColumnasMixin on _KanbanDashboardDatosMixin {
 
   Future<void> _archivarColumna(TareaEstatus estatus, bool archivada) async {
     if (archivada) {
+      // Sin este chequeo, se podía archivar la última columna visible
+      // (o todas, una por una) dejando el tablero sin ningún lugar donde
+      // soltar o crear tarjetas nuevas.
+      if (_columnasVisibles.length <= 1) {
+        _toast(
+          'No puedes archivar la última lista visible del tablero.',
+          ok: false,
+        );
+        return;
+      }
       // Cuenta sobre `_tareasCompletas` (el total real), no `_tareas`: un
       // filtro de vista activo no debe hacer parecer una lista vacía
       // cuando en realidad tiene tarjetas ocultas por el filtro. Sin

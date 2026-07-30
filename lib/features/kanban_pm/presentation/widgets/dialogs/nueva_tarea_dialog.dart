@@ -100,7 +100,7 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
       firstDate: DateTime.now().subtract(const Duration(days: 365)),
       lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
     );
-    if (fecha != null) setState(() => _fechaVencimiento = fecha);
+    if (fecha != null && mounted) setState(() => _fechaVencimiento = fecha);
   }
 
   Future<void> _crear() async {
@@ -186,7 +186,17 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
+    // `barrierDismissible: false` (en el `showDialog` que abre este
+    // widget) no basta: solo bloquea tocar fuera, no el botón/gesto
+    // atrás del sistema, que hace pop directo sin consultarlo. Sin
+    // `PopScope`, cerrar con "atrás" justo después de tocar "Crear
+    // tarea" no cancelaba nada — `crearTarea` seguía su curso en el
+    // repositorio y la tarjeta quedaba creada pero invisible, porque el
+    // `pop(id)` final de `_crear()` se saltaba por `!mounted` y quien
+    // llamó nunca recibía el id para refrescar/avisar.
+    return PopScope(
+      canPop: !_guardando,
+      child: Dialog(
       backgroundColor: KanbanColors.bg2,
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -238,7 +248,17 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
                       color: KanbanColors.tdim,
                       size: 20,
                     ),
-                    onPressed: () => Navigator.of(context).pop(),
+                    // Deshabilitado mientras `_guardando` (igual que el
+                    // botón "Crear tarea"): sin esto, cerrar con la "X"
+                    // justo después de tocar "Crear tarea" no cancelaba
+                    // nada — `crearTarea` seguía su curso en el
+                    // repositorio y la tarjeta quedaba creada pero
+                    // invisible, porque el `pop(id)` final de `_crear()`
+                    // se saltaba por `!mounted` y quien llamó nunca
+                    // recibía el id para refrescar/avisar.
+                    onPressed: _guardando
+                        ? null
+                        : () => Navigator.of(context).pop(),
                   ),
                 ],
               ),
@@ -385,6 +405,7 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
             ),
           ],
         ),
+      ),
       ),
     );
   }

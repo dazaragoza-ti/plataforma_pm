@@ -66,7 +66,7 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
       lastDate: ahora.add(const Duration(days: 365 * 2)),
       initialDateRange: _rango,
     );
-    if (elegido != null) setState(() => _rango = elegido);
+    if (elegido != null && mounted) setState(() => _rango = elegido);
   }
 
   /// Mismo lenguaje visual que los chips activables del header del tablero

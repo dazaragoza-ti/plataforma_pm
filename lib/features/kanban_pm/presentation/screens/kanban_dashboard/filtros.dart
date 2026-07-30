@@ -25,7 +25,7 @@ mixin _KanbanDashboardFiltrosMixin on _KanbanDashboardDatosMixin {
       departamentosFiltro: _departamentosFiltro,
       etiquetaIdsFiltro: _etiquetaIdsFiltro,
     );
-    if (resultado == null) return;
+    if (resultado == null || !mounted) return;
     setState(() {
       _fechaDesde = resultado.fechaDesde;
       _fechaHasta = resultado.fechaHasta;
@@ -50,6 +50,7 @@ mixin _KanbanDashboardFiltrosMixin on _KanbanDashboardDatosMixin {
     // "apuntando" a un id que ya no existe en ningún lado, y el tablero
     // se quedaba mostrando cero tarjetas en silencio, sin ningún filtro
     // visible en la UI que explicara por qué.
+    if (!mounted) return;
     final idsVigentes = _etiquetas.map((e) => e.id).toSet();
     if (_etiquetaIdsFiltro.any((id) => !idsVigentes.contains(id))) {
       setState(() {

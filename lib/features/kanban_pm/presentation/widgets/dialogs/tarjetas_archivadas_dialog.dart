@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../../data/kanban_repository.dart';
 import '../../../domain/entities/tarea.dart';
-import '../../../kanban_constants.dart' show KanbanColors, kanbanToast;
+import '../../../kanban_constants.dart'
+    show KanbanColors, KanbanColumna, kanbanToast;
 import 'kanban_alert_dialog.dart';
 
 /// A diferencia de las listas archivadas (que siguen en la lista de
@@ -43,6 +44,7 @@ class TarjetasArchivadasDialog extends StatefulWidget {
 
 class _TarjetasArchivadasDialogState extends State<TarjetasArchivadasDialog> {
   List<Tarea> _archivadas = [];
+  List<KanbanColumna> _columnas = [];
   bool _cargando = true;
 
   @override
@@ -53,10 +55,16 @@ class _TarjetasArchivadasDialogState extends State<TarjetasArchivadasDialog> {
 
   Future<void> _cargar() async {
     try {
-      final todas = await widget.repository.listarTareas();
+      final resultados = await Future.wait([
+        widget.repository.listarTareas(),
+        widget.repository.listarColumnas(),
+      ]);
       if (!mounted) return;
+      final todas = resultados[0] as List<Tarea>;
+      final columnas = resultados[1] as List<KanbanColumna>;
       setState(() {
         _archivadas = todas.where((t) => t.archivada).toList();
+        _columnas = columnas;
         _cargando = false;
       });
     } catch (ex) {
@@ -69,9 +77,34 @@ class _TarjetasArchivadasDialogState extends State<TarjetasArchivadasDialog> {
   Future<void> _desarchivar(Tarea t) async {
     try {
       await widget.repository.archivarTarea(t.id, false);
+      // Se llama SIN condicionar a `mounted`: es la única forma en que el
+      // tablero se entera de que esta tarjeta ya no está archivada. Si
+      // este diálogo se cerró (tocar fuera, atrás) mientras
+      // `archivarTarea` seguía en curso, la tarjeta queda genuinamente
+      // desarchivada en el repositorio — saltarse este aviso la dejaría
+      // invisible en el tablero hasta que algo no relacionado disparara
+      // otro refresco, pareciendo que "Desarchivar" no hizo nada.
+      widget.onDesarchivada();
       if (!mounted) return;
       setState(() => _archivadas.removeWhere((x) => x.id == t.id));
-      widget.onDesarchivada();
+      // Desarchivar la tarjeta no basta si su columna TAMBIÉN sigue
+      // archivada (es posible: se puede archivar una tarjeta individual
+      // y, después, toda su columna): sin este aviso, la tarjeta
+      // simplemente desaparecía de esta lista sin volver a aparecer en
+      // ningún otro lado, y el usuario no tenía forma de saber por qué
+      // "Desarchivar" parecía no haber hecho nada.
+      final columnasDeLaTarea = _columnas.where(
+        (c) => c.estatus == t.estatus,
+      );
+      if (columnasDeLaTarea.isNotEmpty && columnasDeLaTarea.first.archivada) {
+        kanbanToast(
+          context,
+          'La lista "${columnasDeLaTarea.first.titulo}" también está '
+          'archivada — desarchívala desde "Listas archivadas" para que '
+          '"${t.titulo}" vuelva a aparecer.',
+          ok: false,
+        );
+      }
     } catch (ex) {
       if (!mounted) return;
       kanbanToast(context, 'Error al desarchivar: $ex', ok: false);

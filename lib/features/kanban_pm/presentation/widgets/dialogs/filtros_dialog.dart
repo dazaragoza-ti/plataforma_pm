@@ -53,7 +53,20 @@ class FiltrosDialog {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
+      // `PopScope(canPop: false)`, no solo `barrierDismissible: false`:
+      // ese flag solo bloquea tocar fuera del diálogo — el botón/gesto
+      // atrás del sistema (o el del navegador en web) invoca
+      // `Navigator.maybePop()` directo, sin consultarlo. Sin este
+      // bloqueo, cerrar este spinner con "atrás" hacía que el
+      // `Navigator.of(context, rootNavigator: true).pop()` de más abajo
+      // (que asume que este spinner sigue siendo la ruta superior)
+      // cerrara en su lugar la pantalla real que quedó encima — sacando
+      // al usuario de todo el tablero solo por tocar "atrás" mientras
+      // cargaban los filtros.
+      builder: (_) => const PopScope(
+        canPop: false,
+        child: Center(child: CircularProgressIndicator()),
+      ),
     );
 
     // Los departamentos no tienen catálogo propio (son texto libre en

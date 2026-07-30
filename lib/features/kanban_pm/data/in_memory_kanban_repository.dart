@@ -461,6 +461,19 @@ class InMemoryKanbanRepository implements KanbanRepository {
   @override
   Future<int> crearTarea(Tarea tarea) async {
     await _latencia();
+    // Ver el comentario de `_reubicarEnColumna`: ninguna tarea debe
+    // terminar en una columna archivada. A diferencia de mover una
+    // tarjeta existente (que puede simplemente no-opear), crear una
+    // nueva no tiene un estado previo al que "quedarse" — se lanza para
+    // que cada llamador (el formulario de nueva tarea, el "Deshacer" de
+    // un borrado) se entere y avise en vez de crear una tarjeta
+    // invisible sin que nadie lo note.
+    if (_columnaArchivada(tarea.estatus)) {
+      throw StateError(
+        'La columna de destino está archivada; no se puede crear la '
+        'tarjeta ahí.',
+      );
+    }
     final id = _nextTareaId++;
     final enColumna = _tareas.where((t) => t.estatus == tarea.estatus).length;
     // Reasigna ids de actividad frescos (en vez de confiar en los que traiga
@@ -478,7 +491,7 @@ class InMemoryKanbanRepository implements KanbanRepository {
   }
 
   @override
-  Future<void> moverTarea(
+  Future<bool> moverTarea(
     int tareaId,
     TareaEstatus nuevoEstatus, {
     int? posicion,
@@ -486,7 +499,7 @@ class InMemoryKanbanRepository implements KanbanRepository {
     await _latencia();
     final origen = _tareas[_indice(tareaId)].estatus;
     final movida = _reubicarEnColumna(tareaId, nuevoEstatus, posicion: posicion);
-    if (!movida) return;
+    if (!movida) return false;
     if (origen != nuevoEstatus) {
       _registrarFechaRealDeEstatus(tareaId, nuevoEstatus);
       // El usuario tomó el control manualmente: si la tarjeta venía
@@ -507,6 +520,7 @@ class InMemoryKanbanRepository implements KanbanRepository {
         'a "${_tituloColumna(nuevoEstatus)}"',
       );
     }
+    return true;
   }
 
   /// Mueve [tareaId] a [nuevoEstatus] reasignando `orden` en la columna
@@ -621,10 +635,21 @@ class InMemoryKanbanRepository implements KanbanRepository {
     await _latencia();
     final idx = _indice(tarea.id);
     final anterior = _tareas[idx];
-    _tareas[idx] = tarea;
+    // Ver el comentario de `_reubicarEnColumna`: mismo guard que
+    // `crearTarea`/`moverTarea` aplican para el mismo campo — si
+    // `tarea.estatus` apunta a una columna archivada, se conserva el
+    // estatus anterior en vez de aplicar ese cambio en particular. Hoy
+    // ningún llamador real cambia `estatus` a través de este método
+    // (todos solo editan fechas/dependencias), pero dejar el campo sin
+    // proteger aquí sería una trampa latente para código futuro que sí
+    // lo reutilice para reposicionar una tarjeta.
+    final tareaSegura = _columnaArchivada(tarea.estatus)
+        ? tarea.copyWith(estatus: anterior.estatus)
+        : tarea;
+    _tareas[idx] = tareaSegura;
     _ajustarContraPredecesoras(tarea.id);
     final movidas = _reprogramarSucesoresEnCascada(tarea.id);
-    _registrarCambiosDeActualizacion(anterior, tarea);
+    _registrarCambiosDeActualizacion(anterior, tareaSegura);
     return movidas;
   }
 

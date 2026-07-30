@@ -23,6 +23,15 @@ class PausarTareaDialog {
     if (!hayPendientes) return true;
     final resultado = await showDialog<bool>(
       context: context,
+      // Sin esto, tocar fuera del diálogo mientras `_confirmar()` sigue
+      // en curso (~150ms de latencia simulada) lo cerraba con
+      // `resultado == null` — la nota de pausa se guardaba igual en el
+      // historial de la tarea (el `Future` de `registrarNotaPausa` no se
+      // cancela), pero como el llamador recibía "cancelado", la tarjeta
+      // nunca se movía a Pausa: quedaba una entrada de historial
+      // "Pausó: ..." fantasma para una tarea que en realidad nunca se
+      // pausó.
+      barrierDismissible: false,
       builder: (_) =>
           _PausarTareaDialogContent(repository: repository, tarea: tarea),
     );
@@ -76,7 +85,15 @@ class _PausarTareaDialogContentState extends State<_PausarTareaDialogContent> {
   @override
   Widget build(BuildContext context) {
     final pendientes = widget.tarea.actividades.where((a) => !a.terminada);
-    return kanbanAlertDialog(
+    // `barrierDismissible: false` (en `PausarTareaDialog.show`) no basta:
+    // solo bloquea tocar fuera, no el botón/gesto atrás del sistema, que
+    // hace pop directo sin consultarlo. `PopScope` sí lo bloquea también,
+    // cerrando el mismo hueco por el que se podía cancelar en apariencia
+    // (dejando una entrada de historial "Pausó: ..." fantasma) mientras
+    // `registrarNotaPausa` seguía en curso.
+    return PopScope(
+      canPop: !_guardando,
+      child: kanbanAlertDialog(
       titulo: 'Pausar tarea',
       content: SizedBox(
         width: 380,
@@ -142,6 +159,7 @@ class _PausarTareaDialogContentState extends State<_PausarTareaDialogContent> {
           child: Text(_guardando ? 'Guardando…' : 'Pausar'),
         ),
       ],
+      ),
     );
   }
 }

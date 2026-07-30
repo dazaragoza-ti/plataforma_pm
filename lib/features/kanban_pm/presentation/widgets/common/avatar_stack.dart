@@ -21,9 +21,15 @@ class AvatarStack extends StatelessWidget {
     final visibles = miembros.length > maxVisible
         ? maxVisible
         : miembros.length;
+    final hayMas = miembros.length > maxVisible;
+    // El ancho debe reservar espacio también para la burbuja "+N" (se
+    // posiciona igual que un avatar más, en `left: maxVisible * 14.0`):
+    // sin sumarla aquí, el `Stack` (recortado por su `clipBehavior` por
+    // defecto) le cortaba buena parte del círculo cada vez que había más
+    // miembros que `maxVisible`.
     return SizedBox(
       height: 22,
-      width: 14.0 * visibles + 8,
+      width: 14.0 * (visibles + (hayMas ? 1 : 0)) + 8,
       child: Stack(
         children: [
           for (var i = 0; i < visibles; i++)
@@ -48,7 +54,7 @@ class AvatarStack extends StatelessWidget {
                 ),
               ),
             ),
-          if (miembros.length > maxVisible)
+          if (hayMas)
             Positioned(
               left: maxVisible * 14.0,
               child: CircleAvatar(

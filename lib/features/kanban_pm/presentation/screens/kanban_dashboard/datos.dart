@@ -439,15 +439,29 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
         ? destinoCompleto.length
         : posicionReal;
     try {
-      await _repo.moverTarea(t.id, nuevoEstatus, posicion: posicion);
+      final movida = await _repo.moverTarea(
+        t.id,
+        nuevoEstatus,
+        posicion: posicion,
+      );
       // El `setState` de arriba es optimista: reescribe `_tareas[idx]` a
       // partir de la `t` que llegó como argumento, así que cualquier otro
       // cambio hecho en el repositorio aparte del estatus/orden se
       // perdía — la tarjeta se movía bien, pero mostraba datos
       // desactualizados hasta la siguiente recarga completa.
       await _cargar();
+      // `movida == false`: la columna destino se archivó justo antes de
+      // que este movimiento llegara al repositorio. Sin este aviso, la
+      // tarjeta simplemente "regresaba sola" a su columna original (por
+      // el `_cargar()` de arriba) sin ninguna explicación de por qué.
+      if (!movida && mounted) {
+        _toast(
+          'No se pudo mover: la columna de destino está archivada.',
+          ok: false,
+        );
+      }
     } catch (ex) {
-      _toast('Error al mover tarea: $ex', ok: false);
+      if (mounted) _toast('Error al mover tarea: $ex', ok: false);
       await _cargar();
     }
   }
@@ -483,14 +497,22 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
       await _repo.eliminarTarea(t.id);
       await _cargar();
       _toastAccion('Tarjeta eliminada', 'Deshacer', () async {
-        // Recreación ligera: nueva id, no restaura enlaces de otras
-        // tareas que dependían de esta (el repositorio ya los limpió).
-        // `historial: []`: sin esto, `t.copyWith()` conservaba el
-        // historial completo de la tarjeta borrada Y `crearTarea` le
-        // agregaba otro "Creó la tarjeta" encima, dejando dos entradas de
-        // creación con fechas distintas en la tarjeta "recreada".
-        await _repo.crearTarea(t.copyWith(historial: []));
-        await _cargar();
+        try {
+          // Recreación ligera: nueva id, no restaura enlaces de otras
+          // tareas que dependían de esta (el repositorio ya los limpió).
+          // `historial: []`: sin esto, `t.copyWith()` conservaba el
+          // historial completo de la tarjeta borrada Y `crearTarea` le
+          // agregaba otro "Creó la tarjeta" encima, dejando dos entradas
+          // de creación con fechas distintas en la tarjeta "recreada".
+          await _repo.crearTarea(t.copyWith(historial: []));
+          await _cargar();
+        } catch (ex) {
+          // Puede fallar si, mientras estaba el toast en pantalla, se
+          // archivó la columna donde vivía esta tarjeta — sin este
+          // try/catch, la excepción de `crearTarea` quedaba sin manejar
+          // y el usuario no se enteraba de que el "Deshacer" no funcionó.
+          _toast('No se pudo deshacer: $ex', ok: false);
+        }
       });
     } catch (ex) {
       _toast('Error: $ex', ok: false);
@@ -554,7 +576,13 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
     final fallidos = <int>[];
     for (final id in ids) {
       try {
-        await _repo.moverTarea(id, nuevoEstatus);
+        // `moverTarea` devuelve `false` (sin lanzar) si la columna
+        // destino se archivó mientras el lote seguía en curso — hay que
+        // contarla como fallo explícitamente, o el toast final reportaría
+        // "N tarjetas movidas" incluyendo tarjetas que en realidad se
+        // quedaron donde estaban.
+        final movida = await _repo.moverTarea(id, nuevoEstatus);
+        if (!movida) fallidos.add(id);
       } catch (_) {
         fallidos.add(id);
       }

@@ -27,7 +27,11 @@ abstract class KanbanRepository {
 
   Future<int> crearTarea(Tarea tarea);
 
-  Future<void> moverTarea(
+  /// Devuelve `false` (sin mover nada) si [nuevoEstatus] es una columna
+  /// archivada — quien llama debe distinguir esto de un movimiento
+  /// exitoso (p. ej. al mover varias tarjetas en lote, para no reportar
+  /// como "movidas" tarjetas que en realidad se quedaron donde estaban).
+  Future<bool> moverTarea(
     int tareaId,
     TareaEstatus nuevoEstatus, {
     int? posicion,

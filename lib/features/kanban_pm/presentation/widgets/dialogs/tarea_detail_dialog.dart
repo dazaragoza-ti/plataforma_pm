@@ -77,6 +77,15 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
   bool _creandoMiembro = false;
   Color _colorNuevoMiembro = kColorPaletteEtiquetas.first;
 
+  /// Guards contra doble-tap/Enter-y-clic-rápido: sin ellos, un segundo
+  /// disparo antes de que el primer `await` resuelva (~150ms de latencia
+  /// simulada) creaba dos `Miembro`/`TareaEtiqueta` duplicados — el
+  /// repositorio no deduplica por nombre ni por `usuarioId`. Mismo
+  /// patrón que `WorkspaceMiembrosDialog._agregando`.
+  bool _guardandoEtiquetaNueva = false;
+  bool _guardandoMiembroNuevo = false;
+  final Set<String> _agregandoDeDirectorio = {};
+
   /// Id de la actividad bajo la que se está agregando una subtarea (`null`
   /// si ninguna, o si el composer visible es el de nivel raíz).
   int? _padreSubActividad;
@@ -149,28 +158,33 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
 
   Future<void> _crearEtiqueta() async {
     final nombre = _nuevaEtiquetaCtrl.text.trim();
-    if (nombre.isEmpty) return;
-    final id = await widget.repository.crearEtiqueta(
-      nombre,
-      _colorNuevaEtiqueta,
-    );
-    // El chequeo de `mounted` va ANTES de tocar el controller: si el
-    // diálogo se cerró durante el `await` de arriba, `dispose()` ya corrió
-    // y `_nuevaEtiquetaCtrl` quedó liberado — llamar `.clear()` sobre un
-    // `TextEditingController` ya disposed lanza una excepción.
-    if (!mounted) return;
-    _nuevaEtiquetaCtrl.clear();
-    // Mismo motivo que en `_crearMiembro`: agregar al catálogo local en vez
-    // de `_cargar()` para no perder ediciones sin guardar del resto del
-    // formulario.
-    setState(() {
-      _creandoEtiqueta = false;
-      _catalogoEtiquetas = [
-        ..._catalogoEtiquetas,
-        TareaEtiqueta(id: id, nombre: nombre, color: _colorNuevaEtiqueta),
-      ];
-      _etiquetaIdsSeleccionadas.add(id);
-    });
+    if (nombre.isEmpty || _guardandoEtiquetaNueva) return;
+    _guardandoEtiquetaNueva = true;
+    try {
+      final id = await widget.repository.crearEtiqueta(
+        nombre,
+        _colorNuevaEtiqueta,
+      );
+      // El chequeo de `mounted` va ANTES de tocar el controller: si el
+      // diálogo se cerró durante el `await` de arriba, `dispose()` ya corrió
+      // y `_nuevaEtiquetaCtrl` quedó liberado — llamar `.clear()` sobre un
+      // `TextEditingController` ya disposed lanza una excepción.
+      if (!mounted) return;
+      _nuevaEtiquetaCtrl.clear();
+      // Mismo motivo que en `_crearMiembro`: agregar al catálogo local en vez
+      // de `_cargar()` para no perder ediciones sin guardar del resto del
+      // formulario.
+      setState(() {
+        _creandoEtiqueta = false;
+        _catalogoEtiquetas = [
+          ..._catalogoEtiquetas,
+          TareaEtiqueta(id: id, nombre: nombre, color: _colorNuevaEtiqueta),
+        ];
+        _etiquetaIdsSeleccionadas.add(id);
+      });
+    } finally {
+      _guardandoEtiquetaNueva = false;
+    }
   }
 
   void _toggleMiembro(int id) {
@@ -183,27 +197,35 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
 
   Future<void> _crearMiembro() async {
     final nombre = _nuevoMiembroCtrl.text.trim();
-    if (nombre.isEmpty) return;
-    final id = await widget.repository.crearMiembro(nombre, _colorNuevoMiembro);
-    // Ver el comentario equivalente en `_crearEtiqueta`: el chequeo de
-    // `mounted` va antes de tocar el controller, no después.
-    if (!mounted) return;
-    _nuevoMiembroCtrl.clear();
-    // Agrega el miembro nuevo al catálogo local en vez de recargar con
-    // `_cargar()`: esa llamada re-lee la tarea del repositorio y pisa por
-    // completo el estado del formulario (título, fechas, la propia
-    // selección de miembros que se acaba de tocar…) con lo último guardado
-    // — como este diálogo no autoguarda campo por campo, eso borraba
-    // cualquier cambio sin persistir todavía con solo crear un miembro
-    // nuevo.
-    setState(() {
-      _creandoMiembro = false;
-      _catalogoMiembros = [
-        ..._catalogoMiembros,
-        Miembro(id: id, nombre: nombre, colorAvatar: _colorNuevoMiembro),
-      ];
-      _miembroIdsSeleccionados.add(id);
-    });
+    if (nombre.isEmpty || _guardandoMiembroNuevo) return;
+    _guardandoMiembroNuevo = true;
+    try {
+      final id = await widget.repository.crearMiembro(
+        nombre,
+        _colorNuevoMiembro,
+      );
+      // Ver el comentario equivalente en `_crearEtiqueta`: el chequeo de
+      // `mounted` va antes de tocar el controller, no después.
+      if (!mounted) return;
+      _nuevoMiembroCtrl.clear();
+      // Agrega el miembro nuevo al catálogo local en vez de recargar con
+      // `_cargar()`: esa llamada re-lee la tarea del repositorio y pisa por
+      // completo el estado del formulario (título, fechas, la propia
+      // selección de miembros que se acaba de tocar…) con lo último guardado
+      // — como este diálogo no autoguarda campo por campo, eso borraba
+      // cualquier cambio sin persistir todavía con solo crear un miembro
+      // nuevo.
+      setState(() {
+        _creandoMiembro = false;
+        _catalogoMiembros = [
+          ..._catalogoMiembros,
+          Miembro(id: id, nombre: nombre, colorAvatar: _colorNuevoMiembro),
+        ];
+        _miembroIdsSeleccionados.add(id);
+      });
+    } finally {
+      _guardandoMiembroNuevo = false;
+    }
   }
 
   /// Agrega a [usuario] (alguien del directorio global, típicamente de
@@ -212,24 +234,30 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
   /// [Usuario.id] (ver [Miembro.usuarioId]), así que esta área le
   /// aparece en su selector aunque no sea "de su departamento".
   Future<void> _agregarDeDirectorio(Usuario usuario) async {
-    final id = await widget.repository.crearMiembro(
-      usuario.nombre,
-      usuario.colorAvatar,
-      usuarioId: usuario.id,
-    );
-    if (!mounted) return;
-    setState(() {
-      _catalogoMiembros = [
-        ..._catalogoMiembros,
-        Miembro(
-          id: id,
-          nombre: usuario.nombre,
-          colorAvatar: usuario.colorAvatar,
-          usuarioId: usuario.id,
-        ),
-      ];
-      _miembroIdsSeleccionados.add(id);
-    });
+    if (_agregandoDeDirectorio.contains(usuario.id)) return;
+    _agregandoDeDirectorio.add(usuario.id);
+    try {
+      final id = await widget.repository.crearMiembro(
+        usuario.nombre,
+        usuario.colorAvatar,
+        usuarioId: usuario.id,
+      );
+      if (!mounted) return;
+      setState(() {
+        _catalogoMiembros = [
+          ..._catalogoMiembros,
+          Miembro(
+            id: id,
+            nombre: usuario.nombre,
+            colorAvatar: usuario.colorAvatar,
+            usuarioId: usuario.id,
+          ),
+        ];
+        _miembroIdsSeleccionados.add(id);
+      });
+    } finally {
+      _agregandoDeDirectorio.remove(usuario.id);
+    }
   }
 
   /// Lista desplegable con el catálogo completo del tablero para marcar/
@@ -356,7 +384,17 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   side: BorderSide(color: KanbanColors.borde),
                                   onPressed: () async {
                                     await _agregarDeDirectorio(u);
-                                    setDialogState(() {});
+                                    // `ctx.mounted` (no solo el `mounted`
+                                    // del diálogo grande, que sigue vivo
+                                    // aunque este selector anidado ya se
+                                    // haya cerrado): sin este chequeo,
+                                    // cerrar "Miembros" mientras el
+                                    // `await` de arriba sigue en curso
+                                    // deja `setDialogState` apuntando a
+                                    // un `StatefulBuilder` ya desmontado
+                                    // — lanza incluso en release, no solo
+                                    // en un `assert` de debug.
+                                    if (ctx.mounted) setDialogState(() {});
                                   },
                                 ),
                             ],
@@ -382,7 +420,9 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                           ),
                           onSubmitted: (_) async {
                             await _crearMiembro();
-                            setDialogState(() {});
+                            // Ver el comentario equivalente de
+                            // `_agregarDeDirectorio` más arriba.
+                            if (ctx.mounted) setDialogState(() {});
                           },
                         ),
                       ),
@@ -393,7 +433,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                         ),
                         onPressed: () async {
                           await _crearMiembro();
-                          setDialogState(() {});
+                          if (ctx.mounted) setDialogState(() {});
                         },
                       ),
                     ],
@@ -407,9 +447,13 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                         initial: _colorNuevoMiembro,
                         titulo: 'Color del miembro',
                       );
-                      if (elegido == null) return;
+                      if (elegido == null || !mounted) return;
                       setState(() => _colorNuevoMiembro = elegido);
-                      setDialogState(() {});
+                      // Ver el comentario de `_agregarDeDirectorio` más
+                      // arriba: `mounted` (del diálogo grande) no basta,
+                      // hace falta `ctx.mounted` (de este selector
+                      // anidado) antes de tocar `setDialogState`.
+                      if (ctx.mounted) setDialogState(() {});
                     },
                   ),
                 ] else
@@ -431,16 +475,23 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
           ),
           actions: [
             TextButton(
-              onPressed: () {
-                setState(() => _creandoMiembro = false);
-                Navigator.of(ctx).pop();
-              },
+              onPressed: () => Navigator.of(ctx).pop(),
               child: const Text('Cerrar'),
             ),
           ],
         ),
       ),
-    );
+    ).then((_) {
+      // Se ejecuta sin importar cómo se cerró el selector (botón
+      // "Cerrar", tocar fuera, Esc, atrás del sistema) — antes solo el
+      // botón "Cerrar" reseteaba `_creandoMiembro`/limpiaba el texto sin
+      // confirmar; cualquier otra forma de cerrar dejaba el composer de
+      // "nuevo miembro" abierto (con lo que se hubiera escrito) para la
+      // próxima vez que se abriera "Miembros".
+      if (!mounted) return;
+      setState(() => _creandoMiembro = false);
+      _nuevoMiembroCtrl.clear();
+    });
   }
 
   Future<void> _elegirFecha({required bool esInicio}) async {
@@ -450,7 +501,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
       firstDate: DateTime.now().subtract(const Duration(days: 365)),
       lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
     );
-    if (fecha == null) return;
+    if (fecha == null || !mounted) return;
     setState(() {
       if (esInicio) {
         _fechaInicio = fecha;
@@ -477,7 +528,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
       context: context,
       initialTime: TimeOfDay.fromDateTime(actual),
     );
-    if (hora == null) return;
+    if (hora == null || !mounted) return;
     setState(() {
       final base = _fechaInicio ?? DateTime.now();
       _fechaInicio = DateTime(
@@ -565,9 +616,20 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
       );
       if (!continuar || !mounted) return;
     }
-    await widget.repository.moverTarea(t.id, nuevo);
+    final movida = await widget.repository.moverTarea(t.id, nuevo);
     widget.onRefresh();
     await _cargar();
+    // `movida == false`: la columna destino se archivó en la ventana
+    // entre el chequeo de más arriba y esta llamada (o durante el
+    // `PausarTareaDialog`/chequeo de límite de WIP, que también esperan).
+    // Sin este aviso, el botón "no hacía nada" sin ninguna explicación.
+    if (!movida && mounted) {
+      kanbanToast(
+        context,
+        'No se pudo mover: la columna de destino está archivada.',
+        ok: false,
+      );
+    }
   }
 
   String _labelBoton(TareaEstatus estatus) {
@@ -653,11 +715,26 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
       desc,
       padreId: padreId,
     );
+    // Sin condicionar a `mounted`: es la única forma en que el tablero
+    // (`KanbanDashboardScreen`) se entera de que esta tarjeta tiene una
+    // actividad nueva. Mismo motivo que `_eliminarActividad`/
+    // `_eliminarTarea`/`_toggleActividad` en este mismo archivo, que ya
+    // llaman `widget.onRefresh()` sin ese chequeo — si este diálogo se
+    // cerró (tocar fuera, atrás) mientras el `await` de arriba seguía en
+    // curso, la actividad queda genuinamente creada en el repositorio,
+    // pero saltarse este aviso dejaría el conteo de checklist de la
+    // tarjeta desactualizado en el tablero hasta un refresco no
+    // relacionado.
+    widget.onRefresh();
+    // El chequeo de `mounted` sí aplica a partir de aquí: `setState`
+    // sobre este diálogo (que puede ya estar `dispose()`ado) y `_cargar`
+    // (que solo tiene sentido si el diálogo sigue abierto para mostrar
+    // el resultado).
+    if (!mounted) return;
     setState(() {
       _creandoActividad = false;
       _padreSubActividad = null;
     });
-    widget.onRefresh();
     await _cargar();
   }
 
@@ -1191,7 +1268,17 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
   @override
   Widget build(BuildContext context) {
     final t = _tarea;
-    return Dialog(
+    // `canPop: !_guardando` bloquea CUALQUIER forma de cerrar (la "X",
+    // tocar fuera del diálogo, el botón atrás) mientras `_guardar()`
+    // sigue en curso — sin esto, cerrar a la mitad del `await
+    // actualizarTarea(...)` no cancelaba nada: si la escritura fallaba
+    // (p. ej. la tarea se eliminó desde otra pestaña/acción mientras se
+    // editaba), el `catch` mostraba el error solo `if (mounted)`, que ya
+    // era `false` — el usuario se iba creyendo que guardó (o canceló)
+    // cuando en realidad sus cambios se perdieron en silencio.
+    return PopScope(
+      canPop: !_guardando,
+      child: Dialog(
       backgroundColor: KanbanColors.bg2,
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -1274,7 +1361,14 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                             color: KanbanColors.tdim,
                             size: 20,
                           ),
-                          onPressed: () => Navigator.of(context).pop(),
+                          // Deshabilitado mientras se guarda — ver el
+                          // `PopScope` de más arriba: sin esto, el ícono
+                          // seguía viéndose clicable aunque `canPop`
+                          // bloqueara el cierre real, sin ninguna pista
+                          // visual de por qué "no hacía nada".
+                          onPressed: _guardando
+                              ? null
+                              : () => Navigator.of(context).pop(),
                         ),
                       ],
                     ),
@@ -1424,9 +1518,18 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                 ),
                                 backgroundColor: KanbanColors.bg3,
                                 side: BorderSide(color: KanbanColors.borde),
-                                onPressed: () => setState(
-                                  () => _creandoEtiqueta = !_creandoEtiqueta,
-                                ),
+                                onPressed: () => setState(() {
+                                  _creandoEtiqueta = !_creandoEtiqueta;
+                                  // Al cerrar el composer sin confirmar
+                                  // (este chip es un toggle, no un botón
+                                  // "Cancelar" aparte), limpia el texto a
+                                  // medio escribir — sin esto, la próxima
+                                  // vez que se abriera "Nueva" aparecía
+                                  // con el borrador anterior todavía ahí.
+                                  if (!_creandoEtiqueta) {
+                                    _nuevaEtiquetaCtrl.clear();
+                                  }
+                                }),
                               ),
                             ],
                           ),
@@ -1466,7 +1569,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   initial: _colorNuevaEtiqueta,
                                   titulo: 'Color de la etiqueta',
                                 );
-                                if (elegido != null) {
+                                if (elegido != null && mounted) {
                                   setState(() => _colorNuevaEtiqueta = elegido);
                                 }
                               },
@@ -1485,7 +1588,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                     ? null
                                     : () => setState(() => _portada = null),
                               );
-                              if (elegido != null) {
+                              if (elegido != null && mounted) {
                                 setState(() => _portada = elegido);
                               }
                             },
@@ -1681,7 +1784,17 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                             OutlinedButton.icon(
                               onPressed: () => setState(() {
                                 _creandoActividad = true;
+                                // Si había un composer de SUBTAREA abierto
+                                // (`_padreSubActividad` apuntando a otra
+                                // actividad), este botón lo cierra
+                                // implícitamente al abrir el de nivel
+                                // raíz — sin limpiar el controller aquí,
+                                // el texto que se hubiera escrito para
+                                // esa subtarea seguía ahí y podía
+                                // terminar creado como actividad de nivel
+                                // raíz sin que el usuario lo notara.
                                 _padreSubActividad = null;
+                                _nuevaActividadCtrl.clear();
                               }),
                               icon: Icon(
                                 Icons.add_rounded,
@@ -1839,6 +1952,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                   ),
                 ],
               ),
+      ),
       ),
     );
   }
