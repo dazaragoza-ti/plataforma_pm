@@ -4,6 +4,7 @@ import '../../../domain/entities/actividad.dart';
 import '../../../domain/entities/miembro.dart';
 import '../../../domain/entities/tarea.dart';
 import '../../../kanban_constants.dart';
+import '../calendario/gantt_layout.dart' show finRealEfectivoDe;
 
 /// Miembro involucrado en una tarea (asignado directamente o responsable de
 /// al menos una de sus subtareas) junto con las subtareas de esa tarea que
@@ -48,9 +49,6 @@ class _GanttRealViewState extends State<GanttRealView> {
   Map<int, Miembro> get _miembrosPorId => {
     for (final m in widget.miembros) m.id: m,
   };
-
-  String _fecha(DateTime d) =>
-      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
   /// Rango de fechas/hora planeadas para una subtarea delegada (ver
   /// [Actividad.fechaInicio]/[Actividad.fechaFin]) — mismo formato
@@ -625,7 +623,11 @@ class _GanttRealViewState extends State<GanttRealView> {
       );
     }
     final iniReal = t.fechaInicioReal;
-    final finReal = t.fechaFinReal ?? (iniReal != null ? DateTime.now() : null);
+    // Mismo cálculo que usa el layout puro del Gantt (`finRealEfectivoDe`),
+    // para que ninguno de los dos pueda mostrar una fecha de fin real (ni
+    // por lo tanto un retraso) distinta del otro.
+    final finReal = finRealEfectivoDe(t);
+    final sinFechaRealRegistrada = t.cerrada && t.fechaFinReal == null;
     final hoy = DateTime.now();
 
     var minFecha = ini;
@@ -685,7 +687,7 @@ class _GanttRealViewState extends State<GanttRealView> {
                       ),
                       alignment: Alignment.center,
                       child: Text(
-                        '${_fecha(a)} – ${_fecha(b)}',
+                        '${kanbanFecha(a)} – ${kanbanFecha(b)}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -704,7 +706,9 @@ class _GanttRealViewState extends State<GanttRealView> {
       );
     }
 
-    final diasRetraso = (finReal != null)
+    final diasRetraso = sinFechaRealRegistrada
+        ? 0
+        : (finReal != null)
         ? finReal.difference(fin).inDays
         : (DateTime.now().isAfter(fin) ? DateTime.now().difference(fin).inDays : 0);
 
@@ -784,7 +788,15 @@ class _GanttRealViewState extends State<GanttRealView> {
             );
           },
         ),
-        if (diasRetraso > 0)
+        if (sinFechaRealRegistrada)
+          Padding(
+            padding: const EdgeInsets.only(top: 6, left: 62),
+            child: Text(
+              'Sin fecha real registrada',
+              style: TextStyle(fontSize: 11.5, color: KanbanColors.tdim),
+            ),
+          )
+        else if (diasRetraso > 0)
           Padding(
             padding: const EdgeInsets.only(top: 6, left: 62),
             child: Text(

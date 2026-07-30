@@ -3,6 +3,7 @@ import '../../../kanban_constants.dart';
 import '../../../data/kanban_repository.dart';
 import '../../../domain/entities/tarea_etiqueta.dart';
 import '../common/color_wheel_picker.dart';
+import 'confirmar_eliminar_dialog.dart';
 
 /// Gestor de etiquetas del tablero: renombrar/recolorear o eliminar una
 /// existente, o crear una nueva — todo desde un solo lugar en vez de solo
@@ -36,20 +37,34 @@ class _EtiquetasDialogState extends State<EtiquetasDialog> {
     _cargar();
   }
 
-  Future<void> _cargar() async {
-    final etiquetas = await widget.repository.listarEtiquetas();
+  void _error(Object ex) {
     if (!mounted) return;
-    setState(() {
-      _etiquetas = etiquetas;
-      _cargando = false;
-    });
+    kanbanToast(context, 'Error: $ex', ok: false);
+  }
+
+  Future<void> _cargar() async {
+    try {
+      final etiquetas = await widget.repository.listarEtiquetas();
+      if (!mounted) return;
+      setState(() {
+        _etiquetas = etiquetas;
+        _cargando = false;
+      });
+    } catch (ex) {
+      if (mounted) setState(() => _cargando = false);
+      _error(ex);
+    }
   }
 
   Future<void> _crear() async {
     final resultado = await _EtiquetaFormDialog.show(context);
     if (resultado == null) return;
-    await widget.repository.crearEtiqueta(resultado.$1, resultado.$2);
-    await _cargar();
+    try {
+      await widget.repository.crearEtiqueta(resultado.$1, resultado.$2);
+      await _cargar();
+    } catch (ex) {
+      _error(ex);
+    }
   }
 
   Future<void> _editar(TareaEtiqueta existente) async {
@@ -59,46 +74,41 @@ class _EtiquetasDialogState extends State<EtiquetasDialog> {
       colorInicial: existente.color,
     );
     if (resultado == null) return;
-    await widget.repository.actualizarEtiqueta(
-      existente.copyWith(nombre: resultado.$1, color: resultado.$2),
-    );
-    await _cargar();
+    try {
+      await widget.repository.actualizarEtiqueta(
+        existente.copyWith(nombre: resultado.$1, color: resultado.$2),
+      );
+      await _cargar();
+    } catch (ex) {
+      _error(ex);
+    }
   }
 
   Future<void> _eliminar(TareaEtiqueta e) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: KanbanColors.bg2,
-        surfaceTintColor: Colors.transparent,
-        title: Text(
-          'Eliminar etiqueta',
-          style: TextStyle(color: KanbanColors.texto),
-        ),
-        content: Text(
+    final ok = await confirmarEliminar(
+      context,
+      titulo: 'Eliminar etiqueta',
+      mensaje:
           '¿Eliminar la etiqueta "${e.nombre}"? Se quitará de todas las '
           'tarjetas que la usen.',
-          style: TextStyle(color: KanbanColors.texto),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: KanbanColors.danger,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
     );
-    if (ok != true) return;
-    await widget.repository.eliminarEtiqueta(e.id);
-    await _cargar();
+    if (!ok) return;
+    try {
+      await widget.repository.eliminarEtiqueta(e.id);
+      await _cargar();
+      if (!mounted) return;
+      // Mismo patrón "Deshacer" que ya usan archivar/eliminar tarjeta —
+      // antes eliminar una etiqueta era de las pocas acciones destructivas
+      // del módulo sin ninguna forma de revertirla. Igual que esas, es una
+      // recreación (id nuevo): no vuelve a aparecer sola en las tarjetas
+      // que ya la habían perdido.
+      kanbanToastAccion(context, 'Etiqueta eliminada', 'Deshacer', () async {
+        await widget.repository.crearEtiqueta(e.nombre, e.color);
+        await _cargar();
+      });
+    } catch (ex) {
+      _error(ex);
+    }
   }
 
   @override
@@ -317,32 +327,7 @@ class _EtiquetaFormDialogState extends State<_EtiquetaFormDialog> {
                 autofocus: true,
                 onSubmitted: (_) => _guardar(),
                 style: TextStyle(fontSize: 13, color: KanbanColors.texto),
-                decoration: InputDecoration(
-                  labelText: 'Nombre',
-                  labelStyle: TextStyle(fontSize: 12, color: KanbanColors.tdim),
-                  isDense: true,
-                  filled: true,
-                  fillColor: KanbanColors.bg3,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: KanbanColors.borde),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: KanbanColors.borde),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(
-                      color: KanbanColors.accent,
-                      width: 2,
-                    ),
-                  ),
-                ),
+                decoration: kanbanInputDecoration(label: 'Nombre'),
               ),
               const SizedBox(height: 14),
               Text(

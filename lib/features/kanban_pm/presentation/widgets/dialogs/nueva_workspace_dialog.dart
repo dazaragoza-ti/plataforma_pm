@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../../data/workspace_repository.dart';
 import '../../../domain/entities/workspace.dart';
-import '../../../kanban_constants.dart' show KanbanColors, kColorPaletteEtiquetas;
+import '../../../kanban_constants.dart'
+    show KanbanColors, kColorPaletteEtiquetas, kanbanToast, kanbanInputDecoration;
 import '../../../data/usuario_directorio.dart';
 import '../common/color_wheel_picker.dart';
+import 'kanban_alert_dialog.dart';
 
 /// Diálogo para crear una nueva área de trabajo: nombre + color (para
 /// distinguirlas de un vistazo en el selector). Crea el área en el
@@ -16,19 +18,34 @@ class NuevaWorkspaceDialog {
     required WorkspaceRepository repository,
   }) async {
     final ctrl = TextEditingController();
+    try {
+      return await _mostrarYCrear(context, repository: repository, ctrl: ctrl);
+    } finally {
+      ctrl.dispose();
+    }
+  }
+
+  static Future<Workspace?> _mostrarYCrear(
+    BuildContext context, {
+    required WorkspaceRepository repository,
+    required TextEditingController ctrl,
+  }) async {
     var color = kColorPaletteEtiquetas[0];
 
     final resultado = await showDialog<(String, Color)>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
-          return AlertDialog(
-            backgroundColor: KanbanColors.bg2,
-            surfaceTintColor: Colors.transparent,
-            title: Text(
-              'Nueva área de trabajo',
-              style: TextStyle(color: KanbanColors.texto),
-            ),
+          // Si el nombre queda vacío no se cierra el diálogo sin avisar (antes
+          // Enter/"Crear" cerraban de todas formas y no se creaba nada): se
+          // mantiene abierto para corregir, igual que etiquetas/plantillas.
+          void confirmar() {
+            if (ctrl.text.trim().isEmpty) return;
+            Navigator.of(ctx).pop((ctrl.text.trim(), color));
+          }
+
+          return kanbanAlertDialog(
+            titulo: 'Nueva área de trabajo',
             content: SizedBox(
               width: 320,
               child: Column(
@@ -39,29 +56,10 @@ class NuevaWorkspaceDialog {
                     controller: ctrl,
                     autofocus: true,
                     style: TextStyle(fontSize: 13, color: KanbanColors.texto),
-                    decoration: InputDecoration(
-                      hintText: 'Nombre del área de trabajo…',
-                      isDense: true,
-                      filled: true,
-                      fillColor: KanbanColors.bg3,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(9),
-                        borderSide: BorderSide(color: KanbanColors.borde),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(9),
-                        borderSide: BorderSide(
-                          color: KanbanColors.accent,
-                          width: 1.5,
-                        ),
-                      ),
+                    decoration: kanbanInputDecoration(
+                      hint: 'Nombre del área de trabajo…',
                     ),
-                    onSubmitted: (v) =>
-                        Navigator.of(ctx).pop((v, color)),
+                    onSubmitted: (_) => confirmar(),
                   ),
                   const SizedBox(height: 14),
                   Text(
@@ -90,7 +88,7 @@ class NuevaWorkspaceDialog {
                 child: const Text('Cancelar'),
               ),
               ElevatedButton(
-                onPressed: () => Navigator.of(ctx).pop((ctrl.text, color)),
+                onPressed: confirmar,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: KanbanColors.accent,
                   foregroundColor: Colors.white,
@@ -103,10 +101,17 @@ class NuevaWorkspaceDialog {
       ),
     );
     if (resultado == null || resultado.$1.trim().isEmpty) return null;
-    return repository.crearWorkspace(
-      resultado.$1,
-      resultado.$2,
-      creadorUsuarioId: usuarioActual.value.id,
-    );
+    try {
+      return await repository.crearWorkspace(
+        resultado.$1,
+        resultado.$2,
+        creadorUsuarioId: usuarioActual.value.id,
+      );
+    } catch (ex) {
+      if (context.mounted) {
+        kanbanToast(context, 'No se pudo crear el área de trabajo: $ex', ok: false);
+      }
+      return null;
+    }
   }
 }

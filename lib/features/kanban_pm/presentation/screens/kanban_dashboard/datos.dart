@@ -47,6 +47,7 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
   }
 
   Future<void> _cargar() async {
+    final generacion = ++_generacionCarga;
     if (_primeraCarga) setState(() => _cargando = true);
     try {
       final busqueda = _searchCtrl.text;
@@ -125,20 +126,30 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
             .toList();
       }
       if (!mounted) return;
+      // Descarta el resultado si ya no es la carga más reciente: sin esto,
+      // una `_cargar()` más lenta (p. ej. con texto de búsqueda, que hace
+      // el doble de llamadas al repositorio) podía resolver después de otra
+      // más rápida disparada casi al mismo tiempo y pisar `_tareas` con
+      // datos obsoletos, aunque en pantalla ya se viera el estado nuevo.
+      if (generacion != _generacionCarga) return;
       final nuevasNotificaciones = _actualizarNotificaciones(
         baseParaNotificaciones,
       );
       setState(() {
         _tareas = tareas;
+        _tareasCompletas = baseParaNotificaciones;
+        _tareasAbsolutas = todasSinBusqueda;
         _tarjetasArchivadasCount = tarjetasArchivadasCount;
       });
       if (nuevasNotificaciones.isNotEmpty) {
         _avisarNuevasAsignaciones(nuevasNotificaciones);
       }
     } catch (ex) {
-      if (mounted) _toast('Error al cargar: $ex', ok: false);
+      if (mounted && generacion == _generacionCarga) {
+        _toast('Error al cargar: $ex', ok: false);
+      }
     } finally {
-      if (mounted) {
+      if (mounted && generacion == _generacionCarga) {
         setState(() {
           _cargando = false;
           _primeraCarga = false;
@@ -277,6 +288,7 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
       repository: _repo,
       columnas: _columnasVisibles,
       miembros: _miembros,
+      etiquetas: _etiquetas,
     );
     if (id != null) {
       await _cargar();
@@ -292,6 +304,7 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
       repository: _repo,
       columnas: _columnasVisibles,
       miembros: _miembros,
+      etiquetas: _etiquetas,
       plantilla: elegida,
     );
     if (id != null) {
@@ -332,7 +345,12 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
     }
     final limite = columna?.limiteWip;
     if (limite == null) return null;
-    final ocupadas = _tareas
+    // `_tareasCompletas` (no `_tareas`): el límite debe respetar el total
+    // real de la columna, no solo lo que un filtro de vista activo (Mis
+    // tareas, miembro, búsqueda…) deja visible en este momento — si no,
+    // una tarjeta oculta por el filtro no cuenta para el límite y se
+    // puede violar sin aviso.
+    final ocupadas = _tareasCompletas
         .where((x) => x.id != excluirId && x.estatus == destino)
         .length;
     if (ocupadas + extra > limite) {
@@ -345,9 +363,9 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
 
   Future<void> _moverTarea(
     Tarea t,
-    TareaEstatus nuevoEstatus,
-    int posicion,
-  ) async {
+    TareaEstatus nuevoEstatus, {
+    int? antesDeId,
+  }) async {
     final origen = t.estatus;
     if (origen != nuevoEstatus) {
       final bloqueo = _wipBloqueado(nuevoEstatus, excluirId: t.id);
@@ -370,7 +388,13 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
               .where((x) => x.id != t.id && x.estatus == nuevoEstatus)
               .toList()
             ..sort((a, b) => a.orden.compareTo(b.orden));
-      final pos = posicion.clamp(0, destinoActual.length);
+      final posVisible = antesDeId == null
+          ? destinoActual.length
+          : destinoActual.indexWhere((x) => x.id == antesDeId);
+      final pos = (posVisible == -1 ? destinoActual.length : posVisible).clamp(
+        0,
+        destinoActual.length,
+      );
       destinoActual.insert(pos, t.copyWith(estatus: nuevoEstatus));
       for (var i = 0; i < destinoActual.length; i++) {
         final idx = _tareas.indexWhere((x) => x.id == destinoActual[i].id);
@@ -385,7 +409,35 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
         }
       }
       _tareas.sort((a, b) => a.orden.compareTo(b.orden));
+      // Mismo ajuste, también optimista, sobre `_tareasCompletas`: sin
+      // esto, `_tareasCompletas` solo se refresca dentro del `_cargar()`
+      // (async) de más abajo, y un segundo movimiento disparado antes de
+      // que ese `_cargar()` resuelva leía `_wipBloqueado` contra datos
+      // desactualizados — dos arrastres casi simultáneos a la misma
+      // columna con límite de WIP podían saltárselo los dos, reabriendo
+      // el bug que el propio límite existe para impedir.
+      final idxCompleto = _tareasCompletas.indexWhere((x) => x.id == t.id);
+      if (idxCompleto != -1) {
+        _tareasCompletas[idxCompleto] = _tareasCompletas[idxCompleto]
+            .copyWith(estatus: nuevoEstatus);
+      }
     });
+    // La posición que se manda al repositorio se resuelve contra
+    // `_tareasCompletas` (el total real de la columna destino), no contra
+    // `_tareas` (ya angostada por los filtros de vista activos): un
+    // índice sobre la lista filtrada no corresponde al mismo lugar en la
+    // columna completa si algún filtro oculta tarjetas de en medio.
+    final destinoCompleto =
+        _tareasCompletas
+            .where((x) => x.id != t.id && x.estatus == nuevoEstatus)
+            .toList()
+          ..sort((a, b) => a.orden.compareTo(b.orden));
+    final posicionReal = antesDeId == null
+        ? destinoCompleto.length
+        : destinoCompleto.indexWhere((x) => x.id == antesDeId);
+    final posicion = posicionReal == -1
+        ? destinoCompleto.length
+        : posicionReal;
     try {
       await _repo.moverTarea(t.id, nuevoEstatus, posicion: posicion);
       // El `setState` de arriba es optimista: reescribe `_tareas[idx]` a
@@ -414,43 +466,30 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
   }
 
   Future<void> _eliminarTarjeta(Tarea t) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: KanbanColors.bg2,
-        surfaceTintColor: Colors.transparent,
-        title: Text(
-          'Eliminar tarjeta',
-          style: TextStyle(color: KanbanColors.texto),
-        ),
-        content: Text(
-          '¿Eliminar "${t.titulo}"? Esta acción no se puede deshacer.',
-          style: TextStyle(color: KanbanColors.texto),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: KanbanColors.danger,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
+    final ok = await confirmarEliminar(
+      context,
+      titulo: 'Eliminar tarjeta',
+      // No "esta acción no se puede deshacer": si se dice eso y acto
+      // seguido aparece un toast "Deshacer", el texto contradice lo que
+      // realmente pasa. El mensaje es honesto sobre la limitación real de
+      // ese "Deshacer" (recrea la tarjeta con un id nuevo, sin restaurar
+      // los enlaces de dependencia que otras tareas tenían con ella).
+      mensaje:
+          '¿Eliminar "${t.titulo}"? Podrás deshacerlo enseguida, pero se '
+          'perderán sus enlaces de dependencia con otras tarjetas.',
     );
-    if (ok != true) return;
+    if (!ok) return;
     try {
       await _repo.eliminarTarea(t.id);
       await _cargar();
       _toastAccion('Tarjeta eliminada', 'Deshacer', () async {
         // Recreación ligera: nueva id, no restaura enlaces de otras
         // tareas que dependían de esta (el repositorio ya los limpió).
-        await _repo.crearTarea(t.copyWith());
+        // `historial: []`: sin esto, `t.copyWith()` conservaba el
+        // historial completo de la tarjeta borrada Y `crearTarea` le
+        // agregaba otro "Creó la tarjeta" encima, dejando dos entradas de
+        // creación con fechas distintas en la tarjeta "recreada".
+        await _repo.crearTarea(t.copyWith(historial: []));
         await _cargar();
       });
     } catch (ex) {
@@ -476,7 +515,10 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
     }
     final limite = columna?.limiteWip;
     if (limite != null) {
-      final ocupadas = _tareas
+      // `_tareasCompletas` (no `_tareas`): mismo motivo que en
+      // `_wipBloqueado` — el límite debe respetar el total real de la
+      // columna, no solo lo que un filtro de vista activo deja visible.
+      final ocupadas = _tareasCompletas
           .where((x) => !ids.contains(x.id) && x.estatus == nuevoEstatus)
           .length;
       if (ocupadas + ids.length > limite) {
@@ -489,60 +531,151 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
         return;
       }
     }
-    try {
+    // Ajuste optimista de `_tareasCompletas`, mismo motivo que en
+    // `_moverTarea`: sin esto, un segundo movimiento (otro lote, o un
+    // arrastre individual) disparado mientras este lote todavía está en
+    // curso leía el límite de WIP contra datos desactualizados y podía
+    // saltárselo.
+    setState(() {
       for (final id in ids) {
-        await _repo.moverTarea(id, nuevoEstatus);
+        final idx = _tareasCompletas.indexWhere((x) => x.id == id);
+        if (idx != -1) {
+          _tareasCompletas[idx] = _tareasCompletas[idx].copyWith(
+            estatus: nuevoEstatus,
+          );
+        }
       }
-      await _cargar();
+    });
+    // Cada id se intenta por separado (no un solo try/catch para todo el
+    // lote): antes, si una tarjeta a la mitad fallaba, la excepción cortaba
+    // el for y `_cargar()` nunca corría — el repositorio ya había movido
+    // las tarjetas anteriores pero la UI se quedaba mostrando el estado de
+    // antes, desincronizada de lo que realmente pasó.
+    final fallidos = <int>[];
+    for (final id in ids) {
+      try {
+        await _repo.moverTarea(id, nuevoEstatus);
+      } catch (_) {
+        fallidos.add(id);
+      }
+    }
+    await _cargar();
+    final exitosos = ids.length - fallidos.length;
+    if (fallidos.isEmpty) {
       _toast(
-        '${ids.length} ${ids.length == 1 ? 'tarjeta movida' : 'tarjetas movidas'}',
+        '$exitosos ${exitosos == 1 ? 'tarjeta movida' : 'tarjetas movidas'}',
       );
-    } catch (ex) {
-      _toast('Error: $ex', ok: false);
+    } else if (exitosos == 0) {
+      _toast('No se pudo mover ninguna tarjeta.', ok: false);
+    } else {
+      _toast(
+        'Se movieron $exitosos de ${ids.length} tarjetas '
+        '(${fallidos.length} ${fallidos.length == 1 ? 'falló' : 'fallaron'}).',
+        ok: false,
+      );
     }
   }
 
   Future<void> _archivarTareasEnLote(List<int> ids) async {
-    try {
-      for (final id in ids) {
+    // Mismo motivo que en `_moverTareasEnLote`: try/catch por tarjeta para
+    // que una falla a la mitad no deje el resto del lote (ya archivado en
+    // el repositorio) sin reflejarse en la UI.
+    final exitosos = <int>[];
+    for (final id in ids) {
+      try {
         await _repo.archivarTarea(id, true);
+        exitosos.add(id);
+      } catch (_) {
+        // se reporta el conteo de fallos al final, no aborta el resto.
+      }
+    }
+    await _cargar();
+    if (exitosos.isEmpty) {
+      _toast('No se pudo archivar ninguna tarjeta.', ok: false);
+      return;
+    }
+    final fallidos = ids.length - exitosos.length;
+    final mensaje = fallidos == 0
+        ? '${exitosos.length} ${exitosos.length == 1 ? 'tarjeta archivada' : 'tarjetas archivadas'}'
+        : '${exitosos.length} de ${ids.length} tarjetas archivadas '
+              '($fallidos ${fallidos == 1 ? 'falló' : 'fallaron'})';
+    // El deshacer solo reabre las que sí se archivaron: no tiene sentido
+    // intentar revertir una que nunca llegó a archivarse.
+    _toastAccion(mensaje, 'Deshacer', () async {
+      // Mismo motivo que el lote original: try/catch por tarjeta para que
+      // una falla a la mitad del deshacer no deje sin `_cargar()` (y sin
+      // avisar) el resto que sí se desarchivó.
+      final fallidosDeshacer = <int>[];
+      for (final id in exitosos) {
+        try {
+          await _repo.archivarTarea(id, false);
+        } catch (_) {
+          fallidosDeshacer.add(id);
+        }
       }
       await _cargar();
-      _toastAccion(
-        '${ids.length} ${ids.length == 1 ? 'tarjeta archivada' : 'tarjetas archivadas'}',
-        'Deshacer',
-        () async {
-          for (final id in ids) {
-            await _repo.archivarTarea(id, false);
-          }
-          await _cargar();
-        },
-      );
-    } catch (ex) {
-      _toast('Error: $ex', ok: false);
-    }
+      if (fallidosDeshacer.isNotEmpty) {
+        _toast(
+          fallidosDeshacer.length == exitosos.length
+              ? 'No se pudo deshacer.'
+              : 'Se deshizo ${exitosos.length - fallidosDeshacer.length} de '
+                    '${exitosos.length} tarjetas.',
+          ok: false,
+        );
+      }
+    });
   }
 
   Future<void> _eliminarTareasEnLote(List<int> ids) async {
-    try {
-      final respaldo = _tareas.where((t) => ids.contains(t.id)).toList();
-      for (final id in ids) {
+    final respaldo = _tareas.where((t) => ids.contains(t.id)).toList();
+    // Mismo motivo que en `_moverTareasEnLote`/`_archivarTareasEnLote`.
+    final exitosos = <int>[];
+    for (final id in ids) {
+      try {
         await _repo.eliminarTarea(id);
+        exitosos.add(id);
+      } catch (_) {
+        // se reporta el conteo de fallos al final, no aborta el resto.
+      }
+    }
+    await _cargar();
+    if (exitosos.isEmpty) {
+      _toast('No se pudo eliminar ninguna tarjeta.', ok: false);
+      return;
+    }
+    final fallidos = ids.length - exitosos.length;
+    final mensaje = fallidos == 0
+        ? '${exitosos.length} ${exitosos.length == 1 ? 'tarjeta eliminada' : 'tarjetas eliminadas'}'
+        : '${exitosos.length} de ${ids.length} tarjetas eliminadas '
+              '($fallidos ${fallidos == 1 ? 'falló' : 'fallaron'})';
+    _toastAccion(mensaje, 'Deshacer', () async {
+      // Solo recrea las que sí se llegaron a eliminar. Mismo motivo que
+      // el lote original: try/catch por tarjeta para que una falla a la
+      // mitad del deshacer no deje sin `_cargar()` (y sin avisar) el
+      // resto que sí se recreó.
+      final aRecrear = respaldo.where((t) => exitosos.contains(t.id));
+      var recreadas = 0;
+      for (final t in aRecrear) {
+        try {
+          // `historial: []` — ver el comentario equivalente en
+          // `_eliminarTarjeta`: evita la doble entrada de "Creó la
+          // tarjeta" al recrear.
+          await _repo.crearTarea(t.copyWith(historial: []));
+          recreadas++;
+        } catch (_) {
+          // se reporta el conteo de fallos al final, no aborta el resto.
+        }
       }
       await _cargar();
-      _toastAccion(
-        '${ids.length} ${ids.length == 1 ? 'tarjeta eliminada' : 'tarjetas eliminadas'}',
-        'Deshacer',
-        () async {
-          for (final t in respaldo) {
-            await _repo.crearTarea(t.copyWith());
-          }
-          await _cargar();
-        },
-      );
-    } catch (ex) {
-      _toast('Error: $ex', ok: false);
-    }
+      if (recreadas < exitosos.length) {
+        _toast(
+          recreadas == 0
+              ? 'No se pudo deshacer.'
+              : 'Se deshizo $recreadas de ${exitosos.length} tarjetas.',
+          ok: false,
+        );
+      }
+    });
   }
 }
 

@@ -5,6 +5,7 @@ import '../../../domain/entities/miembro.dart';
 import '../../../domain/entities/tarea_etiqueta.dart';
 import '../../../domain/entities/tarea_plantilla.dart';
 import '../common/color_wheel_picker.dart';
+import 'confirmar_eliminar_dialog.dart';
 
 /// Diálogo de plantillas: lista las existentes (crear tarjeta / editar /
 /// eliminar) y permite crear nuevas. Al elegir "Usar" se cierra devolviendo
@@ -41,19 +42,29 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
     _cargar();
   }
 
-  Future<void> _cargar() async {
-    final resultados = await Future.wait([
-      widget.repository.listarPlantillas(),
-      widget.repository.listarEtiquetas(),
-      widget.repository.listarMiembros(),
-    ]);
+  void _error(Object ex) {
     if (!mounted) return;
-    setState(() {
-      _plantillas = resultados[0] as List<TareaPlantilla>;
-      _etiquetas = resultados[1] as List<TareaEtiqueta>;
-      _miembros = resultados[2] as List<Miembro>;
-      _cargando = false;
-    });
+    kanbanToast(context, 'Error: $ex', ok: false);
+  }
+
+  Future<void> _cargar() async {
+    try {
+      final resultados = await Future.wait([
+        widget.repository.listarPlantillas(),
+        widget.repository.listarEtiquetas(),
+        widget.repository.listarMiembros(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _plantillas = resultados[0] as List<TareaPlantilla>;
+        _etiquetas = resultados[1] as List<TareaEtiqueta>;
+        _miembros = resultados[2] as List<Miembro>;
+        _cargando = false;
+      });
+    } catch (ex) {
+      if (mounted) setState(() => _cargando = false);
+      _error(ex);
+    }
   }
 
   Future<void> _crearOEditar({TareaPlantilla? existente}) async {
@@ -64,47 +75,38 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
       miembros: _miembros,
     );
     if (resultado == null) return;
-    if (existente == null) {
-      await widget.repository.crearPlantilla(resultado);
-    } else {
-      await widget.repository.actualizarPlantilla(resultado);
+    try {
+      if (existente == null) {
+        await widget.repository.crearPlantilla(resultado);
+      } else {
+        await widget.repository.actualizarPlantilla(resultado);
+      }
+      await _cargar();
+    } catch (ex) {
+      _error(ex);
     }
-    await _cargar();
   }
 
   Future<void> _eliminar(TareaPlantilla p) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: KanbanColors.bg2,
-        surfaceTintColor: Colors.transparent,
-        title: Text(
-          'Eliminar plantilla',
-          style: TextStyle(color: KanbanColors.texto),
-        ),
-        content: Text(
-          '¿Eliminar la plantilla "${p.nombre}"?',
-          style: TextStyle(color: KanbanColors.texto),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: KanbanColors.danger,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
+    final ok = await confirmarEliminar(
+      context,
+      titulo: 'Eliminar plantilla',
+      mensaje: '¿Eliminar la plantilla "${p.nombre}"?',
     );
-    if (ok != true) return;
-    await widget.repository.eliminarPlantilla(p.id);
-    await _cargar();
+    if (!ok) return;
+    try {
+      await widget.repository.eliminarPlantilla(p.id);
+      await _cargar();
+      if (!mounted) return;
+      // Mismo patrón "Deshacer" que ya usan archivar/eliminar tarjeta y
+      // eliminar etiqueta — recreación con id nuevo.
+      kanbanToastAccion(context, 'Plantilla eliminada', 'Deshacer', () async {
+        await widget.repository.crearPlantilla(p);
+        await _cargar();
+      });
+    } catch (ex) {
+      _error(ex);
+    }
   }
 
   @override
@@ -418,28 +420,7 @@ class _PlantillaFormDialogState extends State<_PlantillaFormDialog> {
     );
   }
 
-  InputDecoration _decoracion(String label) {
-    return InputDecoration(
-      labelText: label,
-      labelStyle: TextStyle(fontSize: 12, color: KanbanColors.tdim),
-      isDense: true,
-      filled: true,
-      fillColor: KanbanColors.bg3,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: KanbanColors.borde),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: KanbanColors.borde),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: KanbanColors.accent, width: 2),
-      ),
-    );
-  }
+  InputDecoration _decoracion(String label) => kanbanInputDecoration(label: label);
 
   Widget _seccionLabel(String texto) {
     return Padding(

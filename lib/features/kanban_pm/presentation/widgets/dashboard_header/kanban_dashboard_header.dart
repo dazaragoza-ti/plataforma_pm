@@ -7,12 +7,41 @@ import '../../../kanban_constants.dart';
 /// pestaña) y la pantalla del dashboard (qué widget mostrar en el body).
 enum KanbanVista { kanban, lista, graficas, gantt, ganttReal }
 
-/// Por debajo de este ancho se considera "celular": el selector de vista
-/// pasa del header a una barra de navegación inferior ([KanbanBottomNav]).
-/// Deliberadamente más angosto que el umbral de "selector compacto" (900)
-/// — una tablet angosta todavía tiene espacio de sobra para el header, es
-/// solo el celular quien se beneficia de mover la navegación al pulgar.
-const kUmbralMovilKanban = 600.0;
+// `kUmbralMovilKanban` (definido en `kanban_constants.dart`, compartido por
+// todo el módulo): por debajo de ese ancho se considera "celular" y el
+// selector de vista pasa del header a una barra de navegación inferior
+// ([KanbanBottomNav]). Deliberadamente más angosto que el umbral de
+// "selector compacto" (900) — una tablet angosta todavía tiene espacio de
+// sobra para el header, es solo el celular quien se beneficia de mover la
+// navegación al pulgar.
+
+/// Una acción secundaria del header (filtros, mis tareas, modo oscuro,
+/// paleta, etiquetas, plantillas, nueva lista) — descrita una sola vez y
+/// usada tanto para el ícono suelto de escritorio como para el ítem del
+/// menú "más opciones" de móvil (ver [KanbanDashboardHeader._accionesSecundarias]).
+class _AccionHeader {
+  final String id;
+  final IconData icono;
+
+  /// Texto del `Tooltip` en escritorio (y del `_toggleChip` de "Mis
+  /// tareas", que siempre muestra el mismo texto sin importar el estado).
+  final String tooltip;
+
+  /// Texto del `PopupMenuItem` en el menú móvil — a diferencia del
+  /// tooltip, puede reflejar el estado actual (p. ej. "Filtros (activos)").
+  final String etiquetaMenu;
+  final bool activa;
+  final VoidCallback onTap;
+
+  const _AccionHeader({
+    required this.id,
+    required this.icono,
+    required this.tooltip,
+    required this.etiquetaMenu,
+    this.activa = false,
+    required this.onTap,
+  });
+}
 
 /// Header del tablero Kanban: título + selector de vista a la izquierda,
 /// buscador/filtros/acciones a la derecha. Extraído de la pantalla del
@@ -243,18 +272,99 @@ class KanbanDashboardHeader extends StatelessWidget {
     );
   }
 
+  /// Única fuente de verdad para las 7 acciones secundarias del header
+  /// (filtros, mis tareas, modo oscuro, paleta, etiquetas, plantillas,
+  /// nueva lista): antes cada una vivía duplicada en dos sitios — el icono
+  /// suelto de escritorio en [_grupoDerecho] y el `PopupMenuItem`+`switch`
+  /// de [_menuMasOpciones] — así que agregar o tocar una acción exigía
+  /// acordarse de cambiar ambos lugares. Se construye de nuevo en cada
+  /// build (no es cara: son puros `const`/closures) para que siempre
+  /// refleje el estado actual (`filtrosActivos`, `misTareas`, etc.).
+  List<_AccionHeader> _accionesSecundarias() => [
+    _AccionHeader(
+      id: 'filtros',
+      icono: Icons.tune_rounded,
+      tooltip: 'Filtros',
+      etiquetaMenu: filtrosActivos ? 'Filtros (activos)' : 'Filtros',
+      activa: filtrosActivos,
+      onTap: onAbrirFiltros,
+    ),
+    _AccionHeader(
+      id: 'mis_tareas',
+      icono: Icons.person_rounded,
+      tooltip: 'Mis tareas',
+      etiquetaMenu: misTareas ? 'Quitar "Mis tareas"' : 'Mis tareas',
+      activa: misTareas,
+      onTap: onToggleMisTareas,
+    ),
+    _AccionHeader(
+      id: 'modo',
+      icono: KanbanColors.oscuro
+          ? Icons.light_mode_rounded
+          : Icons.dark_mode_rounded,
+      tooltip: KanbanColors.oscuro ? 'Modo claro' : 'Modo oscuro',
+      etiquetaMenu: KanbanColors.oscuro ? 'Modo claro' : 'Modo oscuro',
+      activa: KanbanColors.oscuro,
+      onTap: onToggleModoOscuro,
+    ),
+    if (!KanbanColors.oscuro)
+      _AccionHeader(
+        id: 'paleta',
+        icono: Icons.palette_outlined,
+        tooltip: 'Cambiar fondo del tablero',
+        etiquetaMenu: 'Cambiar fondo del tablero',
+        onTap: onCambiarFondo,
+      ),
+    _AccionHeader(
+      id: 'etiquetas',
+      icono: Icons.label_outline_rounded,
+      tooltip: 'Etiquetas del tablero',
+      etiquetaMenu: 'Etiquetas del tablero',
+      onTap: onAbrirEtiquetas,
+    ),
+    _AccionHeader(
+      id: 'plantillas',
+      icono: Icons.dashboard_customize_outlined,
+      tooltip: 'Plantillas de tarjeta',
+      etiquetaMenu: 'Plantillas de tarjeta',
+      onTap: onAbrirPlantillas,
+    ),
+    _AccionHeader(
+      id: 'nueva_lista',
+      icono: Icons.playlist_add_rounded,
+      tooltip: 'Nueva lista',
+      etiquetaMenu: 'Nueva lista',
+      onTap: onAbrirNuevaLista,
+    ),
+  ];
+
   /// Grupo derecho del header: buscador, filtros y acciones. También un
   /// [Wrap] (alineado a la derecha cuando hay espacio de sobra) por la
   /// misma razón que el grupo izquierdo.
   ///
-  /// En móvil se colapsan las acciones secundarias (filtros, mis tareas,
-  /// modo oscuro, paleta, etiquetas, plantillas) en un menú de "más
-  /// opciones": mostrarlas todas como íconos sueltas ocupaba 4 líneas
-  /// completas antes de llegar al tablero. "Nueva tarea" tampoco se
-  /// muestra aquí en móvil — pasa a ser un FAB (en la pantalla del
-  /// dashboard), más alcanzable con el pulgar.
+  /// En móvil se colapsan las acciones secundarias (ver
+  /// [_accionesSecundarias]) en un menú de "más opciones": mostrarlas
+  /// todas como íconos sueltas ocupaba 4 líneas completas antes de llegar
+  /// al tablero. "Nueva tarea" tampoco se muestra aquí en móvil — pasa a
+  /// ser un FAB (en la pantalla del dashboard), más alcanzable con el
+  /// pulgar.
+  Widget _widgetAccion(_AccionHeader a) => a.id == 'mis_tareas'
+      ? _toggleChip(
+          icon: a.icono,
+          label: a.tooltip,
+          active: a.activa,
+          onTap: a.onTap,
+        )
+      : _iconButton(
+          icon: a.icono,
+          tooltip: a.tooltip,
+          active: a.activa,
+          onTap: a.onTap,
+        );
+
   Widget _grupoDerecho(BuildContext context) {
     final esMovil = MediaQuery.sizeOf(context).width < kUmbralMovilKanban;
+    final acciones = _accionesSecundarias();
     return Wrap(
       alignment: WrapAlignment.end,
       crossAxisAlignment: WrapCrossAlignment.center,
@@ -269,48 +379,15 @@ class KanbanDashboardHeader extends StatelessWidget {
           _botonNotificaciones(),
           _menuMasOpciones(context),
         ] else ...[
-          _iconButton(
-            icon: Icons.tune_rounded,
-            tooltip: 'Filtros',
-            active: filtrosActivos,
-            onTap: onAbrirFiltros,
-          ),
+          // "Filtros" (siempre el primero de `_accionesSecundarias`) va
+          // antes que la campana; el resto va después — mismo orden visual
+          // que antes de unificar ambas listas. La campana se inserta
+          // aparte porque no es una de las 7 acciones de
+          // `_accionesSecundarias` (no tiene equivalente en el menú móvil:
+          // ahí vive fuera del menú, ver `esMovil` arriba).
+          _widgetAccion(acciones.first),
           _botonNotificaciones(),
-          _toggleChip(
-            icon: Icons.person_rounded,
-            label: 'Mis tareas',
-            active: misTareas,
-            onTap: onToggleMisTareas,
-          ),
-          _iconButton(
-            icon: KanbanColors.oscuro
-                ? Icons.light_mode_rounded
-                : Icons.dark_mode_rounded,
-            tooltip: KanbanColors.oscuro ? 'Modo claro' : 'Modo oscuro',
-            active: KanbanColors.oscuro,
-            onTap: onToggleModoOscuro,
-          ),
-          if (!KanbanColors.oscuro)
-            _iconButton(
-              icon: Icons.palette_outlined,
-              tooltip: 'Cambiar fondo del tablero',
-              onTap: onCambiarFondo,
-            ),
-          _iconButton(
-            icon: Icons.label_outline_rounded,
-            tooltip: 'Etiquetas del tablero',
-            onTap: onAbrirEtiquetas,
-          ),
-          _iconButton(
-            icon: Icons.dashboard_customize_outlined,
-            tooltip: 'Plantillas de tarjeta',
-            onTap: onAbrirPlantillas,
-          ),
-          _iconButton(
-            icon: Icons.playlist_add_rounded,
-            tooltip: 'Nueva lista',
-            onTap: onAbrirNuevaLista,
-          ),
+          for (final a in acciones.skip(1)) _widgetAccion(a),
           // Solo tiene sentido en el tablero Kanban: en Lista/Gráficas/
           // Calendario/Gantt ya existe "Nueva lista" y el resto de
           // acciones propias de cada vista — tenerlo siempre visible
@@ -468,29 +545,16 @@ class KanbanDashboardHeader extends StatelessWidget {
   }
 
   /// Menú de "más opciones" que agrupa, en móvil, las acciones secundarias
-  /// que en desktop se muestran como íconos sueltos en el header.
+  /// que en desktop se muestran como íconos sueltos en el header — ambas
+  /// vistas se construyen de la misma lista, ver [_accionesSecundarias].
   Widget _menuMasOpciones(BuildContext context) {
+    final acciones = _accionesSecundarias();
     return PopupMenuButton<String>(
       tooltip: 'Más opciones',
       icon: Icon(Icons.more_vert_rounded, color: KanbanColors.texto),
       color: KanbanColors.bg2,
       onSelected: (valor) {
-        switch (valor) {
-          case 'filtros':
-            onAbrirFiltros();
-          case 'mis_tareas':
-            onToggleMisTareas();
-          case 'modo':
-            onToggleModoOscuro();
-          case 'paleta':
-            onCambiarFondo();
-          case 'etiquetas':
-            onAbrirEtiquetas();
-          case 'plantillas':
-            onAbrirPlantillas();
-          case 'nueva_lista':
-            onAbrirNuevaLista();
-        }
+        acciones.firstWhere((a) => a.id == valor).onTap();
       },
       itemBuilder: (context) => [
         // `enabled: false` desactiva el tap-to-seleccionar del ítem (que
@@ -499,55 +563,11 @@ class KanbanDashboardHeader extends StatelessWidget {
         // interactivo (buscador, switch, slider…) dentro de un menú.
         PopupMenuItem<String>(enabled: false, child: _campoBusqueda()),
         const PopupMenuDivider(),
-        PopupMenuItem(
-          value: 'filtros',
-          child: _itemMenu(
-            Icons.tune_rounded,
-            filtrosActivos ? 'Filtros (activos)' : 'Filtros',
-          ),
-        ),
-        PopupMenuItem(
-          value: 'mis_tareas',
-          child: _itemMenu(
-            Icons.person_rounded,
-            misTareas ? 'Quitar "Mis tareas"' : 'Mis tareas',
-          ),
-        ),
-        PopupMenuItem(
-          value: 'modo',
-          child: _itemMenu(
-            KanbanColors.oscuro
-                ? Icons.light_mode_rounded
-                : Icons.dark_mode_rounded,
-            KanbanColors.oscuro ? 'Modo claro' : 'Modo oscuro',
-          ),
-        ),
-        if (!KanbanColors.oscuro)
+        for (final a in acciones)
           PopupMenuItem(
-            value: 'paleta',
-            child: _itemMenu(
-              Icons.palette_outlined,
-              'Cambiar fondo del tablero',
-            ),
+            value: a.id,
+            child: _itemMenu(a.icono, a.etiquetaMenu),
           ),
-        PopupMenuItem(
-          value: 'etiquetas',
-          child: _itemMenu(
-            Icons.label_outline_rounded,
-            'Etiquetas del tablero',
-          ),
-        ),
-        PopupMenuItem(
-          value: 'plantillas',
-          child: _itemMenu(
-            Icons.dashboard_customize_outlined,
-            'Plantillas de tarjeta',
-          ),
-        ),
-        PopupMenuItem(
-          value: 'nueva_lista',
-          child: _itemMenu(Icons.playlist_add_rounded, 'Nueva lista'),
-        ),
       ],
     );
   }

@@ -9,6 +9,8 @@ import '../../../domain/entities/tarea_etiqueta.dart';
 import '../../../domain/entities/usuario.dart';
 import '../common/color_wheel_picker.dart';
 import 'actividad_fechas_dialog.dart';
+import 'confirmar_eliminar_dialog.dart';
+import 'kanban_alert_dialog.dart';
 import 'pausar_tarea_dialog.dart';
 
 /// Diálogo de detalle/edición de una tarea: datos generales, las 3
@@ -97,15 +99,15 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
 
   Future<void> _cargar() async {
     final results = await Future.wait([
-      widget.repository.listarTareas(),
+      widget.repository.obtenerTarea(widget.tareaId),
       widget.repository.listarEtiquetas(),
       widget.repository.listarMiembros(),
     ]);
     if (!mounted) return;
-    final tareas = results[0] as List<Tarea>;
+    final t = results[0] as Tarea?;
     final etiquetas = results[1] as List<TareaEtiqueta>;
     final miembros = results[2] as List<Miembro>;
-    final t = tareas.firstWhere((x) => x.id == widget.tareaId);
+    if (t == null) return;
     setState(() {
       _tarea = t;
       _catalogoEtiquetas = etiquetas;
@@ -152,8 +154,12 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
       nombre,
       _colorNuevaEtiqueta,
     );
-    _nuevaEtiquetaCtrl.clear();
+    // El chequeo de `mounted` va ANTES de tocar el controller: si el
+    // diálogo se cerró durante el `await` de arriba, `dispose()` ya corrió
+    // y `_nuevaEtiquetaCtrl` quedó liberado — llamar `.clear()` sobre un
+    // `TextEditingController` ya disposed lanza una excepción.
     if (!mounted) return;
+    _nuevaEtiquetaCtrl.clear();
     // Mismo motivo que en `_crearMiembro`: agregar al catálogo local en vez
     // de `_cargar()` para no perder ediciones sin guardar del resto del
     // formulario.
@@ -179,8 +185,10 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     final nombre = _nuevoMiembroCtrl.text.trim();
     if (nombre.isEmpty) return;
     final id = await widget.repository.crearMiembro(nombre, _colorNuevoMiembro);
-    _nuevoMiembroCtrl.clear();
+    // Ver el comentario equivalente en `_crearEtiqueta`: el chequeo de
+    // `mounted` va antes de tocar el controller, no después.
     if (!mounted) return;
+    _nuevoMiembroCtrl.clear();
     // Agrega el miembro nuevo al catálogo local en vez de recargar con
     // `_cargar()`: esa llamada re-lee la tarea del repositorio y pisa por
     // completo el estado del formulario (título, fechas, la propia
@@ -233,10 +241,8 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: KanbanColors.bg2,
-          surfaceTintColor: Colors.transparent,
-          title: Text('Miembros', style: TextStyle(color: KanbanColors.texto)),
+        builder: (ctx, setDialogState) => kanbanAlertDialog(
+          titulo: 'Miembros',
           content: SizedBox(
             width: 300,
             child: Column(
@@ -445,7 +451,24 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
       lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
     );
     if (fecha == null) return;
-    setState(() => esInicio ? _fechaInicio = fecha : _fechaFin = fecha);
+    setState(() {
+      if (esInicio) {
+        _fechaInicio = fecha;
+        // Si el nuevo inicio queda después del fin ya elegido, el fin se
+        // recorre junto con él — mismo comportamiento que arrastrar el
+        // borde izquierdo de una barra en el Gantt (ver
+        // `GanttBar._confirmarIzquierda`), en vez de dejar guardar un
+        // rango de fechas invertido.
+        if (_fechaFin != null && fecha.isAfter(_fechaFin!)) {
+          _fechaFin = fecha;
+        }
+      } else {
+        _fechaFin = fecha;
+        if (_fechaInicio != null && fecha.isBefore(_fechaInicio!)) {
+          _fechaInicio = fecha;
+        }
+      }
+    });
   }
 
   Future<void> _elegirHora() async {
@@ -493,6 +516,22 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
           columna = c;
           break;
         }
+      }
+      // A diferencia de arrastrar una tarjeta (que solo ofrece columnas
+      // visibles como destino), este botón calcula `nuevo` con un
+      // `switch` fijo y no tenía ningún chequeo — si esa columna estaba
+      // archivada, la tarjeta se movía igual y desaparecía del tablero
+      // sin ningún aviso, sin quedar tampoco en "Tarjetas archivadas".
+      if (columna?.archivada == true) {
+        if (mounted) {
+          kanbanToast(
+            context,
+            'La lista "${columna!.titulo}" está archivada. Desarchívala '
+            'antes de mover una tarjeta ahí.',
+            ok: false,
+          );
+        }
+        return;
       }
       final limite = columna?.limiteWip;
       if (limite != null) {
@@ -629,6 +668,18 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
   }
 
   Future<void> _eliminarActividad(int actividadId) async {
+    // Antes era la única acción destructiva del módulo sin confirmación
+    // NI deshacer — la más fácil de disparar sin querer (un solo tap en
+    // el ícono de basura de la fila) y la menos protegida.
+    final actividad = _buscarActividad(_tarea?.actividades ?? [], actividadId);
+    final ok = await confirmarEliminar(
+      context,
+      titulo: 'Eliminar subtarea',
+      mensaje: actividad == null
+          ? '¿Eliminar esta subtarea?'
+          : '¿Eliminar "${actividad.descripcion}"?',
+    );
+    if (!ok) return;
     await widget.repository.eliminarActividad(widget.tareaId, actividadId);
     widget.onRefresh();
     await _cargar();
@@ -667,44 +718,19 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
   }
 
   Future<void> _eliminarTarea() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: KanbanColors.bg2,
-        surfaceTintColor: Colors.transparent,
-        title: Text(
-          'Eliminar tarea',
-          style: TextStyle(color: KanbanColors.texto),
-        ),
-        content: Text(
+    final ok = await confirmarEliminar(
+      context,
+      titulo: 'Eliminar tarea',
+      mensaje:
           '¿Eliminar "${_tarea!.titulo}"? Esta acción no se puede deshacer.',
-          style: TextStyle(color: KanbanColors.texto),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: KanbanColors.danger,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
     );
-    if (ok == true) {
+    if (ok) {
       await widget.repository.eliminarTarea(widget.tareaId);
       widget.onRefresh();
       if (mounted) Navigator.of(context).pop();
     }
   }
 
-  String _fecha(DateTime d) =>
-      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
   String _hora(DateTime d) {
     final h12 = d.hour % 12 == 0 ? 12 : d.hour % 12;
     final periodo = d.hour < 12 ? 'a. m.' : 'p. m.';
@@ -781,24 +807,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     );
   }
 
-  InputDecoration _decoracion() => InputDecoration(
-    isDense: true,
-    filled: true,
-    fillColor: KanbanColors.bg3,
-    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-    border: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(9),
-      borderSide: BorderSide(color: KanbanColors.borde),
-    ),
-    enabledBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(9),
-      borderSide: BorderSide(color: KanbanColors.borde),
-    ),
-    focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(9),
-      borderSide: BorderSide(color: KanbanColors.accent, width: 1.5),
-    ),
-  );
+  InputDecoration _decoracion() => kanbanInputDecoration();
 
   Widget _dropdownClasificacion(
     List<(String, Color)> opciones,
@@ -1311,7 +1320,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                 ),
                                 const SizedBox(width: 6),
                                 Text(
-                                  'Terminado el ${_fecha(t.fechaFinReal!)} '
+                                  'Terminado el ${kanbanFecha(t.fechaFinReal)} '
                                   'a las ${_hora(t.fechaFinReal!)}',
                                   style: TextStyle(
                                     fontSize: 11.5,
@@ -1346,7 +1355,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   child: Text(
                                     _fechaInicio == null
                                         ? 'Fecha inicio'
-                                        : _fecha(_fechaInicio!),
+                                        : kanbanFecha(_fechaInicio),
                                     style: TextStyle(
                                       fontSize: 12.5,
                                       color: KanbanColors.texto,
@@ -1361,7 +1370,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   child: Text(
                                     _fechaFin == null
                                         ? 'Fecha fin'
-                                        : _fecha(_fechaFin!),
+                                        : kanbanFecha(_fechaFin),
                                     style: TextStyle(
                                       fontSize: 12.5,
                                       color: KanbanColors.texto,
@@ -1567,9 +1576,8 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                         ? 'Sin miembros asignados'
                                         : _catalogoMiembros
                                               .where(
-                                                (m) =>
-                                                    _miembroIdsSeleccionados
-                                                        .contains(m.id),
+                                                (m) => _miembroIdsSeleccionados
+                                                    .contains(m.id),
                                               )
                                               .map((m) => m.nombre)
                                               .join(', '),

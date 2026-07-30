@@ -125,12 +125,19 @@ class Tarea {
     String? grupo,
     String? asignadoPor,
     DateTime? fechaInicio,
+    bool limpiarFechaInicio = false,
     DateTime? fechaVencimiento,
+    bool limpiarFechaVencimiento = false,
     DateTime? fechaInicioReal,
+    bool limpiarFechaInicioReal = false,
     DateTime? fechaFinReal,
+    bool limpiarFechaFinReal = false,
     (String, Color)? generales,
+    bool limpiarGenerales = false,
     (String, Color)? nivel,
+    bool limpiarNivel = false,
     (String, Color)? importancia,
+    bool limpiarImportancia = false,
     List<Actividad>? actividades,
     int? orden,
     List<int>? etiquetaIds,
@@ -152,13 +159,23 @@ class Tarea {
       prioridad: prioridad ?? this.prioridad,
       grupo: grupo ?? this.grupo,
       asignadoPor: asignadoPor ?? this.asignadoPor,
-      fechaInicio: fechaInicio ?? this.fechaInicio,
-      fechaVencimiento: fechaVencimiento ?? this.fechaVencimiento,
-      fechaInicioReal: fechaInicioReal ?? this.fechaInicioReal,
-      fechaFinReal: fechaFinReal ?? this.fechaFinReal,
-      generales: generales ?? this.generales,
-      nivel: nivel ?? this.nivel,
-      importancia: importancia ?? this.importancia,
+      fechaInicio: limpiarFechaInicio
+          ? null
+          : (fechaInicio ?? this.fechaInicio),
+      fechaVencimiento: limpiarFechaVencimiento
+          ? null
+          : (fechaVencimiento ?? this.fechaVencimiento),
+      fechaInicioReal: limpiarFechaInicioReal
+          ? null
+          : (fechaInicioReal ?? this.fechaInicioReal),
+      fechaFinReal: limpiarFechaFinReal
+          ? null
+          : (fechaFinReal ?? this.fechaFinReal),
+      generales: limpiarGenerales ? null : (generales ?? this.generales),
+      nivel: limpiarNivel ? null : (nivel ?? this.nivel),
+      importancia: limpiarImportancia
+          ? null
+          : (importancia ?? this.importancia),
       actividades: actividades ?? this.actividades,
       orden: orden ?? this.orden,
       etiquetaIds: etiquetaIds ?? this.etiquetaIds,

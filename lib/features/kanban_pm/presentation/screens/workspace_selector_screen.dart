@@ -10,7 +10,10 @@ import '../../domain/entities/usuario.dart';
 import '../../domain/entities/workspace.dart';
 import '../../kanban_constants.dart';
 import '../widgets/common/color_wheel_picker.dart';
+import '../widgets/dialogs/confirmar_eliminar_dialog.dart';
+import '../widgets/dialogs/kanban_alert_dialog.dart';
 import '../widgets/dialogs/nueva_workspace_dialog.dart';
+import '../widgets/dialogs/workspace_miembros_dialog.dart';
 import 'kanban_dashboard_screen.dart';
 
 /// `true` solo en apps de escritorio nativas (Windows/macOS/Linux) — en web
@@ -62,12 +65,23 @@ class _WorkspaceSelectorScreenState extends State<WorkspaceSelectorScreen> {
   }
 
   Future<void> _cargar() async {
-    final workspaces = await _repo.listarWorkspacesDe(usuarioActual.value.id);
-    if (!mounted) return;
-    setState(() {
-      _workspaces = workspaces;
-      _cargando = false;
-    });
+    try {
+      final workspaces = await _repo.listarWorkspacesDe(
+        usuarioActual.value.id,
+      );
+      if (!mounted) return;
+      setState(() {
+        _workspaces = workspaces;
+        _cargando = false;
+      });
+    } catch (ex) {
+      // Sin este catch, un fallo aquí dejaba `_cargando` en `true` para
+      // siempre — la pantalla se quedaba en el spinner sin ningún aviso ni
+      // forma de reintentar.
+      if (!mounted) return;
+      setState(() => _cargando = false);
+      kanbanToast(context, 'Error al cargar áreas de trabajo: $ex', ok: false);
+    }
   }
 
   Future<void> _crear() async {
@@ -78,57 +92,60 @@ class _WorkspaceSelectorScreenState extends State<WorkspaceSelectorScreen> {
 
   Future<void> _renombrar(Workspace w) async {
     final ctrl = TextEditingController(text: w.nombre);
-    final nuevoNombre = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: KanbanColors.bg2,
-        surfaceTintColor: Colors.transparent,
-        title: Text(
-          'Renombrar área de trabajo',
-          style: TextStyle(color: KanbanColors.texto),
-        ),
-        content: SizedBox(
-          width: 300,
-          child: TextField(
-            controller: ctrl,
-            autofocus: true,
-            style: TextStyle(fontSize: 13, color: KanbanColors.texto),
-            decoration: InputDecoration(
-              isDense: true,
-              filled: true,
-              fillColor: KanbanColors.bg3,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 10,
+    final String? nuevoNombre;
+    try {
+      nuevoNombre = await showDialog<String>(
+        context: context,
+        builder: (ctx) => kanbanAlertDialog(
+          titulo: 'Renombrar área de trabajo',
+          content: SizedBox(
+            width: 300,
+            child: TextField(
+              controller: ctrl,
+              autofocus: true,
+              style: TextStyle(fontSize: 13, color: KanbanColors.texto),
+              decoration: InputDecoration(
+                isDense: true,
+                filled: true,
+                fillColor: KanbanColors.bg3,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(9),
+                  borderSide: BorderSide(color: KanbanColors.borde),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(9),
+                  borderSide: BorderSide(
+                    color: KanbanColors.accent,
+                    width: 1.5,
+                  ),
+                ),
               ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(9),
-                borderSide: BorderSide(color: KanbanColors.borde),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(9),
-                borderSide: BorderSide(color: KanbanColors.accent, width: 1.5),
-              ),
+              onSubmitted: (v) => Navigator.of(ctx).pop(v),
             ),
-            onSubmitted: (v) => Navigator.of(ctx).pop(v),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(ctrl.text),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: KanbanColors.accent,
-              foregroundColor: Colors.white,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancelar'),
             ),
-            child: const Text('Guardar'),
-          ),
-        ],
-      ),
-    );
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(ctrl.text),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: KanbanColors.accent,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Guardar'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      ctrl.dispose();
+    }
     if (nuevoNombre == null || nuevoNombre.trim().isEmpty) return;
     await _repo.renombrarWorkspace(w.id, nuevoNombre);
     await _cargar();
@@ -139,13 +156,8 @@ class _WorkspaceSelectorScreenState extends State<WorkspaceSelectorScreen> {
     final elegido = await showDialog<Color>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: KanbanColors.bg2,
-          surfaceTintColor: Colors.transparent,
-          title: Text(
-            'Color del área de trabajo',
-            style: TextStyle(color: KanbanColors.texto),
-          ),
+        builder: (ctx, setDialogState) => kanbanAlertDialog(
+          titulo: 'Color del área de trabajo',
           content: SizedBox(
             width: 260,
             child: Center(
@@ -178,38 +190,27 @@ class _WorkspaceSelectorScreenState extends State<WorkspaceSelectorScreen> {
     await _cargar();
   }
 
+  Future<void> _gestionarMiembros(Workspace w) async {
+    await WorkspaceMiembrosDialog.show(
+      context,
+      repository: _repo.kanbanRepositoryPara(w.id),
+      tituloWorkspace: w.nombre,
+    );
+    // Si se quitó a la persona activa (`usuarioActual`) de esta área, ya
+    // no debe aparecer en su selector — sin este refresco, la tarjeta
+    // seguía visible/"entrable" hasta que algo más disparara `_cargar()`.
+    await _cargar();
+  }
+
   Future<void> _eliminar(Workspace w) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: KanbanColors.bg2,
-        surfaceTintColor: Colors.transparent,
-        title: Text(
-          'Eliminar área de trabajo',
-          style: TextStyle(color: KanbanColors.texto),
-        ),
-        content: Text(
+    final ok = await confirmarEliminar(
+      context,
+      titulo: 'Eliminar área de trabajo',
+      mensaje:
           '¿Eliminar "${w.nombre}"? Se pierden todas sus tareas, columnas y '
           'catálogos. Esta acción no se puede deshacer.',
-          style: TextStyle(color: KanbanColors.texto),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: KanbanColors.danger,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
     );
-    if (ok != true) return;
+    if (!ok) return;
     await _repo.eliminarWorkspace(w.id);
     await _cargar();
   }
@@ -224,15 +225,15 @@ class _WorkspaceSelectorScreenState extends State<WorkspaceSelectorScreen> {
         ),
       ),
     );
-    // `KanbanColors.oscuro` es global al módulo: si adentro del tablero se
-    // cambió a modo oscuro, sin este `setState` al volver, este selector se
-    // quedaba pintado con los colores claros con los que se montó la
-    // primera vez — inconsistente hasta la próxima recarga completa.
+    // `KanbanColors.oscuro` es estado global mutable (no un
+    // `InheritedWidget`/provider), así que esta pantalla no se entera sola
+    // si cambió mientras se estaba en el tablero. Este `setState` vacío no
+    // es código muerto: no cambia ningún campo propio, solo fuerza un
+    // rebuild para que `build()` vuelva a leer `KanbanColors.bg`/`.texto`/
+    // etc. con la paleta ya actualizada — sin él, este selector se quedaba
+    // pintado con los colores con los que se montó la primera vez.
     if (mounted) setState(() {});
   }
-
-  String _fecha(DateTime d) =>
-      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
   @override
   Widget build(BuildContext context) {
@@ -341,18 +342,15 @@ class _WorkspaceSelectorScreenState extends State<WorkspaceSelectorScreen> {
                             ? '1 área de trabajo'
                             : '${_workspaces.length} áreas de trabajo',
                       ),
-                      _estadistica(
-                        Icons.task_alt_rounded,
-                        () {
-                          final total = _workspaces.fold<int>(
-                            0,
-                            (s, w) => s + w.tareasCount,
-                          );
-                          return total == 1
-                              ? '1 tarea activa'
-                              : '$total tareas activas';
-                        }(),
-                      ),
+                      _estadistica(Icons.task_alt_rounded, () {
+                        final total = _workspaces.fold<int>(
+                          0,
+                          (s, w) => s + w.tareasCount,
+                        );
+                        return total == 1
+                            ? '1 tarea activa'
+                            : '$total tareas activas';
+                      }()),
                     ],
                   ),
                 ],
@@ -649,18 +647,20 @@ class _WorkspaceSelectorScreenState extends State<WorkspaceSelectorScreen> {
                   onSelected: (v) {
                     if (v == 'renombrar') _renombrar(w);
                     if (v == 'color') _cambiarColor(w);
+                    if (v == 'miembros') _gestionarMiembros(w);
                     if (v == 'eliminar') _eliminar(w);
                   },
-                  // Ícono + texto (no solo texto): con 3 opciones muy
+                  // Ícono + texto (no solo texto): con varias opciones muy
                   // parecidas a simple vista ("Renombrar" / "Cambiar
                   // color"), el ícono ayuda a escanear el menú de un
                   // vistazo en vez de tener que leer cada palabra.
                   itemBuilder: (context) => [
                     _itemMenu('renombrar', Icons.edit_outlined, 'Renombrar'),
+                    _itemMenu('color', Icons.palette_outlined, 'Cambiar color'),
                     _itemMenu(
-                      'color',
-                      Icons.palette_outlined,
-                      'Cambiar color',
+                      'miembros',
+                      Icons.people_outline_rounded,
+                      'Miembros',
                     ),
                     _itemMenu(
                       'eliminar',
@@ -706,9 +706,9 @@ class _WorkspaceSelectorScreenState extends State<WorkspaceSelectorScreen> {
                         // que distinguía una tarjeta vacía de una con
                         // trabajo real sin tener que entrar a cada una.
                         w.tareasCount == 0
-                            ? 'Vacía · Creada el ${_fecha(w.fechaCreacion)}'
+                            ? 'Vacía · Creada el ${kanbanFecha(w.fechaCreacion)}'
                             : '${w.tareasCount} ${w.tareasCount == 1 ? 'tarea' : 'tareas'} · '
-                                  '${_fecha(w.fechaCreacion)}',
+                                  '${kanbanFecha(w.fechaCreacion)}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(

@@ -24,10 +24,56 @@ mixin _KanbanDashboardCoreMixin on State<KanbanDashboardScreen> {
   Timer? _boardAutoscrollTimer;
   double? _boardAutoscrollDireccion;
   List<Tarea> _tareas = [];
+
+  /// Universo completo de tareas ACTIVAS (sin archivadas, sin las de
+  /// columnas archivadas) SIN los filtros de vista (búsqueda, "Mis
+  /// tareas", "Solo pendientes", fechas, miembro, departamento, etiqueta)
+  /// — a diferencia de `_tareas`. La necesita el límite de WIP al mover
+  /// una tarjeta (ver `_wipBloqueado`): una tarjeta archivada no debe
+  /// contar como ocupando espacio en su columna.
+  List<Tarea> _tareasCompletas = [];
+
+  /// Como `_tareasCompletas`, pero SIN excluir archivadas ni las de
+  /// columnas archivadas — el universo absoluto tal como vive en el
+  /// repositorio. La necesita el guard anti-ciclo de dependencias y la
+  /// ruta crítica del Gantt: `dependeDeIds` no se limpia al archivar una
+  /// tarea (solo al eliminarla), así que un ciclo real puede cerrarse a
+  /// través de una tarea archivada — si el guard no la ve, no lo detecta.
+  List<Tarea> _tareasAbsolutas = [];
   List<KanbanColumna> _columnas = [];
-  List<TareaEtiqueta> _etiquetas = [];
-  List<Miembro> _miembros = [];
+  List<TareaEtiqueta> _etiquetasInterno = [];
+  List<Miembro> _miembrosInterno = [];
+  Map<int, TareaEtiqueta>? _etiquetasPorIdCache;
+  Map<int, Miembro>? _miembrosPorIdCache;
   bool _cargando = true;
+
+  /// Se incrementa al empezar cada `_cargar()` — quien la llama guarda su
+  /// propio valor y, antes de aplicar el resultado con `setState`, compara
+  /// contra el valor actual: si ya no coinciden, alguien más empezó (y
+  /// probablemente ya terminó) una carga más nueva mientras esta corría, así
+  /// que se descarta en vez de pisar datos frescos con una respuesta vieja
+  /// que tardó más (p. ej. la búsqueda con texto hace el doble de llamadas
+  /// al repositorio que sin texto, así que puede resolver después de una
+  /// recarga sin texto disparada casi al mismo tiempo).
+  int _generacionCarga = 0;
+
+  /// `_etiquetasPorId`/`_miembrosPorId` se pasan a cada `KanbanColumnView`
+  /// del tablero y antes reconstruían un `Map` nuevo cada vez que se los
+  /// leía — cualquier rebuild del dashboard (p. ej. escribir en el
+  /// buscador) los recalculaba aunque el catálogo de etiquetas/miembros no
+  /// hubiera cambiado. El setter invalida el cache solo cuando la lista
+  /// realmente se reasigna (la única vez es en `_cargarColumnasYEtiquetas`).
+  List<TareaEtiqueta> get _etiquetas => _etiquetasInterno;
+  set _etiquetas(List<TareaEtiqueta> valor) {
+    _etiquetasInterno = valor;
+    _etiquetasPorIdCache = null;
+  }
+
+  List<Miembro> get _miembros => _miembrosInterno;
+  set _miembros(List<Miembro> valor) {
+    _miembrosInterno = valor;
+    _miembrosPorIdCache = null;
+  }
 
   /// Cuántas tarjetas están archivadas — a diferencia de las listas
   /// archivadas (que siguen viviendo en `_columnas`), las tarjetas
@@ -85,43 +131,40 @@ mixin _KanbanDashboardCoreMixin on State<KanbanDashboardScreen> {
   List<KanbanColumna> get _columnasVisibles =>
       _columnas.where((c) => !c.archivada).toList();
 
-  Map<int, TareaEtiqueta> get _etiquetasPorId => {
-    for (final e in _etiquetas) e.id: e,
-  };
+  Map<int, TareaEtiqueta> get _etiquetasPorId =>
+      _etiquetasPorIdCache ??= {for (final e in _etiquetas) e.id: e};
 
-  Map<int, Miembro> get _miembrosPorId => {for (final m in _miembros) m.id: m};
+  Map<int, Miembro> get _miembrosPorId =>
+      _miembrosPorIdCache ??= {for (final m in _miembros) m.id: m};
 
-  /// Id del miembro "yo" (usuario de la demo) resuelto una sola vez contra
-  /// el catálogo, con `-1` de respaldo seguro si no hay match.
-  int get _miIdDemo => _miembros
-      .firstWhere(
-        (m) => m.nombre == kUsuarioActualDemo,
-        orElse: () =>
-            const Miembro(id: -1, nombre: '', colorAvatar: Colors.transparent),
-      )
-      .id;
-
-  void _toast(String msg, {bool ok = true}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg, style: const TextStyle(color: Colors.white)),
-        backgroundColor: ok ? KanbanColors.ok : KanbanColors.danger,
-      ),
+  /// Id del miembro "yo" dentro de ESTE tablero, resuelto contra la
+  /// identidad simulada activa (`usuarioActual`, la que se elige en el
+  /// selector de áreas de trabajo) — antes comparaba por nombre contra
+  /// `kUsuarioActualDemo` (una constante fija), así que cambiar de persona
+  /// en el selector no cambiaba qué veía "Mis tareas" ni la campana de
+  /// notificaciones dentro de un tablero ya abierto. Primero intenta por
+  /// `Miembro.usuarioId` (el enlace real con el directorio); si el miembro
+  /// se creó antes de existir ese enlace, cae a comparar por nombre como
+  /// respaldo. `-1` si la persona activa no es miembro de este tablero.
+  int get _miIdDemo {
+    const sinMatch = Miembro(
+      id: -1,
+      nombre: '',
+      colorAvatar: Colors.transparent,
     );
+    final activo = usuarioActual.value;
+    final porDirectorio = _miembros.firstWhere(
+      (m) => m.usuarioId == activo.id,
+      orElse: () => sinMatch,
+    );
+    if (porDirectorio.id != -1) return porDirectorio.id;
+    return _miembros
+        .firstWhere((m) => m.nombre == activo.nombre, orElse: () => sinMatch)
+        .id;
   }
 
-  void _toastAccion(String msg, String etiquetaAccion, VoidCallback onAccion) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg, style: const TextStyle(color: Colors.white)),
-        backgroundColor: KanbanColors.ok,
-        duration: const Duration(seconds: 5),
-        action: SnackBarAction(
-          label: etiquetaAccion,
-          textColor: Colors.white,
-          onPressed: onAccion,
-        ),
-      ),
-    );
-  }
+  void _toast(String msg, {bool ok = true}) => kanbanToast(context, msg, ok: ok);
+
+  void _toastAccion(String msg, String etiquetaAccion, VoidCallback onAccion) =>
+      kanbanToastAccion(context, msg, etiquetaAccion, onAccion);
 }

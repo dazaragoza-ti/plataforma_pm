@@ -6,6 +6,11 @@ export 'domain/entities/kanban_columna.dart';
 export 'domain/entities/tarea_estatus.dart';
 export 'domain/entities/tarea_prioridad.dart';
 
+/// Por debajo de este ancho se considera "celular" en todo el módulo Kanban
+/// (header, tablero, columnas) — un solo umbral compartido para que un
+/// cambio futuro no exija tocarlo en varios archivos por separado.
+const kUmbralMovilKanban = 600.0;
+
 /// Paleta de colores del módulo (un valor por rol visual). Dos instancias
 /// constantes (clara/oscura) viven detrás de [KanbanColors].
 class _KanbanPaleta {
@@ -57,7 +62,11 @@ const _paletaClara = _KanbanPaleta(
   dangerLight: Color(0xFFFEF2F2),
   ok: Color(0xFF22C55E),
   texto: Color(0xFF0F172A),
-  tdim: Color(0xFF94A3B8),
+  // Antes 0xFF94A3B8: contra fondos claros (bg2 blanco, bg3 0xFFF5F7FA) daba
+  // ~2.4-2.6:1 de contraste, muy por debajo del 4.5:1 de WCAG AA para texto
+  // normal (el modo oscuro sí pasaba, ~6:1). Este tono (slate-600) da ~7:1
+  // contra ambos fondos claros.
+  tdim: Color(0xFF475569),
   borde: Color(0xFFE2E8F0),
   toolbarTeal: Color(0xFF17A2B8),
   toolbarDark: Color(0xFF495057),
@@ -320,3 +329,98 @@ const List<Color> kFondosTablero = [
   Color(0xFFFCE7F3),
   Color(0xFFEDE9FE),
 ];
+
+/// Aviso rápido (SnackBar) con el estilo estándar del módulo — antes cada
+/// diálogo (fuera del mixin del dashboard, que ya tenía su propio `_toast`)
+/// reconstruía a mano el mismo `ScaffoldMessenger.showSnackBar` con
+/// `KanbanColors.ok`/`.danger`.
+void kanbanToast(BuildContext context, String msg, {bool ok = true}) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(msg, style: const TextStyle(color: Colors.white)),
+      backgroundColor: ok ? KanbanColors.ok : KanbanColors.danger,
+    ),
+  );
+}
+
+/// Igual que [kanbanToast] pero con una acción (típicamente "Deshacer") y
+/// más tiempo en pantalla para alcanzar a tocarla.
+void kanbanToastAccion(
+  BuildContext context,
+  String msg,
+  String etiquetaAccion,
+  VoidCallback onAccion,
+) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(msg, style: const TextStyle(color: Colors.white)),
+      backgroundColor: KanbanColors.ok,
+      duration: const Duration(seconds: 5),
+      action: SnackBarAction(
+        label: etiquetaAccion,
+        textColor: Colors.white,
+        onPressed: onAccion,
+      ),
+    ),
+  );
+}
+
+/// `InputDecoration` estándar del módulo para campos de texto en diálogos
+/// (fondo `bg3`, borde `borde`, borde de foco `accent`) — antes cada
+/// diálogo (nueva tarea, plantillas, etiquetas, nueva lista, nueva área de
+/// trabajo, detalle de tarea, pausar tarea...) repetía este mismo bloque a
+/// mano, con radios de esquina inconsistentes (8/9/10) sin ninguna razón
+/// real para variar entre uno y otro.
+InputDecoration kanbanInputDecoration({String? label, String? hint}) {
+  return InputDecoration(
+    labelText: label,
+    labelStyle: label == null
+        ? null
+        : TextStyle(fontSize: 12, color: KanbanColors.tdim),
+    hintText: hint,
+    hintStyle: hint == null ? null : TextStyle(color: KanbanColors.tdim),
+    isDense: true,
+    filled: true,
+    fillColor: KanbanColors.bg3,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: BorderSide(color: KanbanColors.borde),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: BorderSide(color: KanbanColors.borde),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: BorderSide(color: KanbanColors.accent, width: 2),
+    ),
+  );
+}
+
+/// Formato `dd/MM/yyyy` usado en toda la lista/calendario/gantt/detalle de
+/// tarea. `null` devuelve `''` (útil para fechas reales que aún no se han
+/// registrado) en vez de forzar a cada llamador a comprobarlo antes.
+String kanbanFecha(DateTime? d) => d == null
+    ? ''
+    : '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
+const _kMesesCortosKanban = [
+  'ene',
+  'feb',
+  'mar',
+  'abr',
+  'may',
+  'jun',
+  'jul',
+  'ago',
+  'sep',
+  'oct',
+  'nov',
+  'dic',
+];
+
+/// Formato compacto `27 jul` usado en la tarjeta de tarea del tablero,
+/// donde el espacio horizontal es más limitado que en la lista/detalle.
+String kanbanFechaCompacta(DateTime d) =>
+    '${d.day.toString().padLeft(2, '0')} ${_kMesesCortosKanban[d.month - 1]}';

@@ -80,6 +80,24 @@ int duracionDiasDe(Tarea t) {
   return fin.difference(ini).inDays + 1;
 }
 
+/// Fecha de fin "efectiva" de la barra Real de [t]: `fechaFinReal` si la
+/// tarea sigue cerrada, o "ahora" mientras esté abierta y ya haya
+/// arrancado (para que la barra crezca en vivo hasta hoy). Se comparte
+/// entre el layout puro y la vista de detalle para que ninguno de los dos
+/// pueda mostrar un cálculo de retraso distinto del otro.
+DateTime? finRealEfectivoDe(Tarea t) {
+  // `t.cerrada` manda, no "¿fechaFinReal ya tiene algo?": si la tarea se
+  // reabrió, `fechaFinReal` puede seguir sellada con la fecha de un
+  // cierre anterior (nunca se limpia, para conservar el historial) —
+  // tratarla como vigente congelaría la barra en esa fecha vieja en vez
+  // de seguir creciendo en vivo. Mismo criterio que ya usa
+  // `kanban_graficas_view.dart` para el cálculo de cumplimiento.
+  if (t.cerrada) return t.fechaFinReal;
+  // Abierta ahora mismo pero nunca cerrada tampoco: no hay fecha real que
+  // mostrar hasta que arranque.
+  return t.fechaInicioReal == null ? null : DateTime.now();
+}
+
 /// Calcula el layout completo del Gantt a partir de las tareas visibles y
 /// el orden de columnas del tablero. Función pura: no depende de
 /// `BuildContext` ni de nada que requiera un frame ya construido, así que
@@ -106,9 +124,10 @@ GanttLayout calcularGanttLayout({
     if (fin.isBefore(ini)) fin = ini;
     if (ini.isBefore(minFecha)) minFecha = ini;
     if (fin.isAfter(maxFecha)) maxFecha = fin;
-    if (t.fechaInicioReal != null) {
+    final finRealEfectivo = finRealEfectivoDe(t);
+    if (t.fechaInicioReal != null && finRealEfectivo != null) {
       final iniReal = soloFecha(t.fechaInicioReal!);
-      final finReal = soloFecha(t.fechaFinReal ?? hoy);
+      final finReal = soloFecha(finRealEfectivo);
       if (iniReal.isBefore(minFecha)) minFecha = iniReal;
       if (finReal.isAfter(maxFecha)) maxFecha = finReal;
     }
@@ -144,10 +163,14 @@ GanttLayout calcularGanttLayout({
     final width = duracionDias * dayWidth;
     barras[t.id] = Rect.fromLTWH(x, y, width, kGanttBarHeight);
 
-    if (t.fechaInicioReal != null) {
-      final enCurso = t.fechaFinReal == null;
+    final finRealEfectivoBarra = finRealEfectivoDe(t);
+    if (t.fechaInicioReal != null && finRealEfectivoBarra != null) {
+      // `!t.cerrada` (no `t.fechaFinReal == null`): una tarea reabierta
+      // sigue en curso aunque conserve un `fechaFinReal` viejo de un
+      // cierre anterior — ver el comentario de `finRealEfectivoDe`.
+      final enCurso = !t.cerrada;
       final iniReal = soloFecha(t.fechaInicioReal!);
-      var finReal = soloFecha(t.fechaFinReal ?? hoy);
+      var finReal = soloFecha(finRealEfectivoBarra);
       if (finReal.isBefore(iniReal)) finReal = iniReal;
       final xReal = iniReal.difference(minFecha).inDays * dayWidth;
       final duracionReal = finReal.difference(iniReal).inDays + 1;

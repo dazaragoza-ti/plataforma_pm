@@ -18,10 +18,66 @@ mixin _KanbanDashboardColumnasMixin on _KanbanDashboardDatosMixin {
   }
 
   Future<void> _archivarColumna(TareaEstatus estatus, bool archivada) async {
+    if (archivada) {
+      // Cuenta sobre `_tareasCompletas` (el total real), no `_tareas`: un
+      // filtro de vista activo no debe hacer parecer una lista vacía
+      // cuando en realidad tiene tarjetas ocultas por el filtro. Sin
+      // esta confirmación, un solo clic en "Archivar lista" podía
+      // esconder un número arbitrario de tarjetas activas del tablero,
+      // la vista Lista, Calendario/Gráficas y la campana de
+      // notificaciones, sin ningún aviso previo de cuántas ni de que
+      // seguían "vivas" en algún lado.
+      final activas = _tareasCompletas
+          .where((t) => t.estatus == estatus)
+          .length;
+      if (activas > 0) {
+        final columna = _columnas.firstWhere((c) => c.estatus == estatus);
+        final ok =
+            await showDialog<bool>(
+              context: context,
+              builder: (ctx) => kanbanAlertDialog(
+                titulo: 'Archivar lista',
+                content: Text(
+                  '"${columna.titulo}" tiene '
+                  '${activas == 1 ? '1 tarjeta activa' : '$activas tarjetas activas'}. '
+                  'Se ocultarán del tablero (y de Lista/Calendario/Gráficas) '
+                  'hasta que desarchives esta lista. ¿Continuar?',
+                  style: TextStyle(color: KanbanColors.texto),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: const Text('Cancelar'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: KanbanColors.accent,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Archivar'),
+                  ),
+                ],
+              ),
+            ) ??
+            false;
+        if (!ok || !mounted) return;
+      }
+    }
     setState(() {
       final idx = _columnas.indexWhere((c) => c.estatus == estatus);
       if (idx != -1) {
         _columnas[idx] = _columnas[idx].copyWith(archivada: archivada);
+      }
+      // Al archivar, saca también de `_tareas` (no solo de `_columnas`) las
+      // tarjetas de esa columna en el mismo `setState`: sin esto, mientras
+      // `_cargar()` de más abajo no termine (~150ms), `_columnasVisibles`
+      // ya no incluía la columna pero `_tareas` sí seguía trayendo sus
+      // tarjetas — en Gráficas, la dona (agrupada por columnas visibles)
+      // dejaba de sumar el mismo total que el KPI de arriba (que cuenta
+      // `_tareas` completo) durante esa ventana.
+      if (archivada) {
+        _tareas = _tareas.where((t) => t.estatus != estatus).toList();
       }
     });
     await _repo.archivarColumna(estatus, archivada);
@@ -99,7 +155,16 @@ mixin _KanbanDashboardColumnasMixin on _KanbanDashboardDatosMixin {
       for (final c in _columnas) c.archivada ? c : cola.removeAt(0),
     ];
     setState(() => _columnas = resultado);
-    await _repo.reordenarColumnas(resultado.map((c) => c.estatus).toList());
+    try {
+      await _repo.reordenarColumnas(resultado.map((c) => c.estatus).toList());
+    } catch (ex) {
+      _toast('Error al reordenar listas: $ex', ok: false);
+      // El `setState` de arriba es optimista: si el repositorio no logró
+      // guardar el nuevo orden, se revierte recargando el catálogo real de
+      // columnas en vez de dejar el tablero mostrando un orden que nunca
+      // se persistió.
+      await _cargarColumnasYEtiquetas();
+    }
   }
 
   /// Zona para soltar una lista entre dos columnas. El área que realmente

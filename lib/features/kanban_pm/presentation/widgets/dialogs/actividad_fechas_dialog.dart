@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../kanban_constants.dart' show KanbanColors;
+import 'kanban_alert_dialog.dart';
 
 /// Fechas (con hora) elegidas para el trabajo de un responsable en una
 /// subtarea — ver [ActividadFechasDialog].
@@ -45,7 +46,7 @@ class ActividadFechasDialog {
               context: ctx,
               initialTime: TimeOfDay.fromDateTime(actual),
             );
-            if (hora == null) return;
+            if (hora == null || !ctx.mounted) return;
             final combinada = DateTime(
               fecha.year,
               fecha.month,
@@ -53,9 +54,21 @@ class ActividadFechasDialog {
               hora.hour,
               hora.minute,
             );
-            setDialogState(
-              () => esInicio ? inicio = combinada : fin = combinada,
-            );
+            setDialogState(() {
+              if (esInicio) {
+                inicio = combinada;
+                // Si el nuevo inicio queda después del fin ya elegido, el
+                // fin se recorre junto con él — mismo comportamiento que
+                // `tarea_detail_dialog.dart`/`gantt_bar.dart`, en vez de
+                // dejar guardar un rango de fechas invertido.
+                if (fin != null && combinada.isAfter(fin!)) fin = combinada;
+              } else {
+                fin = combinada;
+                if (inicio != null && combinada.isBefore(inicio!)) {
+                  inicio = combinada;
+                }
+              }
+            });
           }
 
           Widget campo(String etiqueta, DateTime? valor, VoidCallback onTap) {
@@ -69,13 +82,8 @@ class ActividadFechasDialog {
             );
           }
 
-          return AlertDialog(
-            backgroundColor: KanbanColors.bg2,
-            surfaceTintColor: Colors.transparent,
-            title: Text(
-              'Fechas de la subtarea',
-              style: TextStyle(color: KanbanColors.texto),
-            ),
+          return kanbanAlertDialog(
+            titulo: 'Fechas de la subtarea',
             content: SizedBox(
               width: 320,
               child: Column(
@@ -88,11 +96,7 @@ class ActividadFechasDialog {
                     style: TextStyle(fontSize: 12, color: KanbanColors.tdim),
                   ),
                   const SizedBox(height: 14),
-                  campo(
-                    'Inicio…',
-                    inicio,
-                    () => elegir(esInicio: true),
-                  ),
+                  campo('Inicio…', inicio, () => elegir(esInicio: true)),
                   const SizedBox(height: 8),
                   campo('Fin…', fin, () => elegir(esInicio: false)),
                 ],

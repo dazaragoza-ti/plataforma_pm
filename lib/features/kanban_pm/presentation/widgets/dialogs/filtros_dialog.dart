@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import '../../../data/kanban_repository.dart';
 import '../../../domain/entities/miembro.dart';
 import '../../../domain/entities/tarea_etiqueta.dart';
-import '../../../kanban_constants.dart' show KanbanColors;
+import '../../../kanban_constants.dart' show KanbanColors, kanbanToast;
+import 'kanban_alert_dialog.dart';
 
 /// Selección hecha en [FiltrosDialog] — quien llama decide cómo aplicarla
 /// (normalmente `setState` + recargar), este diálogo no toca el estado de
@@ -46,17 +47,37 @@ class FiltrosDialog {
     var departamentos = Set<String>.of(departamentosFiltro);
     var etiquetaIds = Set<int>.of(etiquetaIdsFiltro);
 
+    // Loading inmediato: sin esto, mientras `listarTareas()` resuelve el
+    // botón que abre "Filtros" parecía no responder. Se cierra apenas
+    // termina el fetch, antes de abrir el diálogo real.
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
     // Los departamentos no tienen catálogo propio (son texto libre en
     // `Tarea.grupo`) — se derivan de *todas* las tareas, no de la lista ya
     // filtrada, para no perder opciones que el filtro actual esconde.
-    final todasLasTareas = await repository.listarTareas();
-    final departamentosDisponibles =
-        todasLasTareas
-            .map((t) => t.grupo)
-            .where((g) => g.isNotEmpty)
-            .toSet()
-            .toList()
-          ..sort();
+    List<String> departamentosDisponibles;
+    try {
+      final todasLasTareas = await repository.listarTareas();
+      departamentosDisponibles =
+          todasLasTareas
+              .map((t) => t.grupo)
+              .where((g) => g.isNotEmpty)
+              .toSet()
+              .toList()
+            ..sort();
+    } catch (ex) {
+      if (context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        kanbanToast(context, 'Error al cargar filtros: $ex', ok: false);
+      }
+      return null;
+    }
+    if (!context.mounted) return null;
+    Navigator.of(context, rootNavigator: true).pop();
     if (!context.mounted) return null;
 
     Future<void> elegirFecha(
@@ -121,10 +142,8 @@ class FiltrosDialog {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
-          return AlertDialog(
-            backgroundColor: KanbanColors.bg2,
-            surfaceTintColor: Colors.transparent,
-            title: Text('Filtros', style: TextStyle(color: KanbanColors.texto)),
+          return kanbanAlertDialog(
+            titulo: 'Filtros',
             content: SizedBox(
               width: 380,
               child: ConstrainedBox(
@@ -177,8 +196,14 @@ class FiltrosDialog {
                         contentPadding: EdgeInsets.zero,
                         controlAffinity: ListTileControlAffinity.leading,
                         value: pendientes,
+                        // `?? false` (no `true`): en todo el resto del
+                        // módulo un filtro "activo" por defecto es `false`
+                        // (ver el comentario en `core.dart` sobre
+                        // `_soloPendientes`) — si el checkbox alguna vez
+                        // reportara `null` (tristate accidental), no
+                        // debería auto-activarse el filtro.
                         onChanged: (v) =>
-                            setDialogState(() => pendientes = v ?? true),
+                            setDialogState(() => pendientes = v ?? false),
                         title: Text(
                           'Solo pendientes',
                           style: TextStyle(

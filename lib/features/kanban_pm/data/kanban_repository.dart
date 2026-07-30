@@ -19,6 +19,12 @@ abstract class KanbanRepository {
   /// cualquier subtarea (a cualquier profundidad del árbol de actividades).
   Future<List<Tarea>> listarTareas({String busqueda = ''});
 
+  /// Trae una sola tarea por id, sin pasar por la lista completa del
+  /// tablero — pensado para abrir su detalle (p. ej. desde una
+  /// notificación o un enlace directo) sin depender de que ya esté
+  /// cargada en memoria. Devuelve `null` si no existe (o fue eliminada).
+  Future<Tarea?> obtenerTarea(int tareaId);
+
   Future<int> crearTarea(Tarea tarea);
 
   Future<void> moverTarea(

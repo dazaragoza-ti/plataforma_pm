@@ -2,11 +2,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../kanban_constants.dart';
 import '../../data/kanban_repository.dart';
+import '../../data/usuario_directorio.dart';
 import '../../domain/entities/actividad.dart';
 import '../../domain/entities/miembro.dart';
 import '../../domain/entities/tarea.dart';
 import '../../domain/entities/tarea_etiqueta.dart';
 import '../widgets/dashboard_header/kanban_dashboard_header.dart';
+import '../widgets/dialogs/confirmar_eliminar_dialog.dart';
+import '../widgets/dialogs/kanban_alert_dialog.dart';
 import '../widgets/dialogs/etiquetas_dialog.dart';
 import '../widgets/dialogs/filtros_dialog.dart';
 import '../widgets/dialogs/listas_archivadas_dialog.dart';
@@ -139,6 +142,9 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen>
                             tareas: _tareas
                                 .where((t) => t.estatus == visibles[i].estatus)
                                 .toList(),
+                            totalReal: _tareasCompletas
+                                .where((t) => t.estatus == visibles[i].estatus)
+                                .length,
                             etiquetasPorId: _etiquetasPorId,
                             miembrosPorId: _miembrosPorId,
                             onTapTarea: _abrirDetalle,
@@ -309,6 +315,12 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen>
                         child: switch (_vista) {
                           KanbanVista.lista => KanbanListaView(
                             tareas: _tareas,
+                            totalesPorEstatus: {
+                              for (final c in _columnas)
+                                c.estatus: _tareasCompletas
+                                    .where((t) => t.estatus == c.estatus)
+                                    .length,
+                            },
                             columnas: _columnasVisibles,
                             miembrosPorId: _miembrosPorId,
                             etiquetasPorId: _etiquetasPorId,
@@ -324,6 +336,7 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen>
                           ),
                           KanbanVista.gantt => CalendarioView(
                             tareas: _tareas,
+                            todasLasTareas: _tareasAbsolutas,
                             columnas: _columnasVisibles,
                             repository: _repo,
                             onRefresh: _cargar,

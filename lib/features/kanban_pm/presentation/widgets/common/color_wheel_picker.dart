@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'
+    show FilteringTextInputFormatter, LengthLimitingTextInputFormatter;
 import '../../../kanban_constants.dart';
 
 /// Selector de color por rueda HSV (matiz + saturación en el círculo,
@@ -23,10 +25,34 @@ class ColorWheelPicker extends StatefulWidget {
 
 class _ColorWheelPickerState extends State<ColorWheelPicker> {
   late HSVColor _hsv = HSVColor.fromColor(widget.initialColor);
+  late final _hexCtrl = TextEditingController(text: _hexDe(_hsv.toColor()));
 
-  void _actualizar(HSVColor nuevo) {
+  static String _hexDe(Color c) =>
+      c.toARGB32().toRadixString(16).substring(2).toUpperCase();
+
+  @override
+  void dispose() {
+    _hexCtrl.dispose();
+    super.dispose();
+  }
+
+  /// [sincronizarHex] en `false` cuando el cambio viene del propio campo de
+  /// texto: sobreescribir `_hexCtrl.text` mientras la persona todavía está
+  /// escribiendo le movería el cursor y "pelearía" con lo que está tecleando.
+  void _actualizar(HSVColor nuevo, {bool sincronizarHex = true}) {
     setState(() => _hsv = nuevo);
     widget.onColorChanged(nuevo.toColor());
+    if (sincronizarHex) _hexCtrl.text = _hexDe(nuevo.toColor());
+  }
+
+  /// Alternativa a la rueda para quien necesita un color exacto (o no puede
+  /// arrastrar con precisión): valida que sean 6 dígitos hexadecimales antes
+  /// de aplicar, así que un HEX a medio escribir no dispara colores basura.
+  void _aplicarHex(String texto) {
+    final limpio = texto.trim().replaceFirst('#', '');
+    if (!RegExp(r'^[0-9a-fA-F]{6}$').hasMatch(limpio)) return;
+    final color = Color(0xFF000000 | int.parse(limpio, radix: 16));
+    _actualizar(HSVColor.fromColor(color), sincronizarHex: false);
   }
 
   void _tocarRueda(Offset posicionLocal) {
@@ -106,12 +132,28 @@ class _ColorWheelPickerState extends State<ColorWheelPicker> {
               ),
             ),
             const SizedBox(width: 10),
-            Text(
-              '#${color.toARGB32().toRadixString(16).substring(2).toUpperCase()}',
-              style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-                color: KanbanColors.tdim,
+            SizedBox(
+              width: 92,
+              child: TextField(
+                controller: _hexCtrl,
+                textCapitalization: TextCapitalization.characters,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp('[0-9a-fA-F]')),
+                  LengthLimitingTextInputFormatter(6),
+                ],
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: KanbanColors.tdim,
+                ),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  prefixText: '#',
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                onChanged: _aplicarHex,
+                onSubmitted: _aplicarHex,
               ),
             ),
           ],
@@ -178,7 +220,8 @@ class _SelectorPainter extends CustomPainter {
     final radio = canvasSize.width / 2;
     final anguloRad = hue * math.pi / 180;
     final distancia = saturation * radio;
-    final punto = centro + Offset(math.cos(anguloRad), math.sin(anguloRad)) * distancia;
+    final punto =
+        centro + Offset(math.cos(anguloRad), math.sin(anguloRad)) * distancia;
 
     canvas.drawCircle(
       punto,

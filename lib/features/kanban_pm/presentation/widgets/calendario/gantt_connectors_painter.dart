@@ -80,13 +80,26 @@ GanttConector? conectorBajoPunto(
   Offset punto, {
   double tolerancia = 6,
 }) {
+  GanttConector? mejor;
+  var mejorDistancia = double.infinity;
   for (final c in conectores) {
-    final d1 = _distanciaPuntoSegmento(punto, c.p1, c.p2);
-    final d2 = _distanciaPuntoSegmento(punto, c.p2, c.p3);
-    final d3 = _distanciaPuntoSegmento(punto, c.p3, c.p4);
-    if (d1 <= tolerancia || d2 <= tolerancia || d3 <= tolerancia) return c;
+    final distancia = [
+      _distanciaPuntoSegmento(punto, c.p1, c.p2),
+      _distanciaPuntoSegmento(punto, c.p2, c.p3),
+      _distanciaPuntoSegmento(punto, c.p3, c.p4),
+    ].reduce((a, b) => a < b ? a : b);
+    // De distancia MÍNIMA entre los candidatos dentro de tolerancia, no
+    // el primero encontrado: con varias dependencias cuyas líneas pasan
+    // cerca unas de otras, el primero en la lista podía no ser el que el
+    // usuario visualmente tocó — y esto se usa para borrar la dependencia
+    // al tocar, así que equivocarse de candidato borra el enlace
+    // equivocado.
+    if (distancia <= tolerancia && distancia < mejorDistancia) {
+      mejor = c;
+      mejorDistancia = distancia;
+    }
   }
-  return null;
+  return mejor;
 }
 
 /// Dibuja líneas "codo" con flecha entre las barras de tareas dependientes,

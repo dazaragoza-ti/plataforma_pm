@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../domain/entities/kanban_columna.dart';
 import '../../../domain/entities/tarea_estatus.dart';
 import '../../../kanban_constants.dart' show KanbanColors;
+import 'kanban_alert_dialog.dart';
 
 /// Diálogo de solo lectura con las listas archivadas del tablero, cada una
 /// con un botón para desarchivarla — quien llama decide qué hacer con eso
@@ -15,13 +16,8 @@ class ListasArchivadasDialog {
   }) {
     return showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: KanbanColors.bg2,
-        surfaceTintColor: Colors.transparent,
-        title: Text(
-          'Listas archivadas',
-          style: TextStyle(color: KanbanColors.texto),
-        ),
+      builder: (ctx) => kanbanAlertDialog(
+        titulo: 'Listas archivadas',
         content: SizedBox(
           width: 320,
           child: Column(

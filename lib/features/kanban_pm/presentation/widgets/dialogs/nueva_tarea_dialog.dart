@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import '../../../kanban_constants.dart';
 import '../../../data/kanban_repository.dart';
+import '../../../data/usuario_directorio.dart';
 import '../../../domain/entities/actividad.dart';
 import '../../../domain/entities/miembro.dart';
 import '../../../domain/entities/tarea.dart';
+import '../../../domain/entities/tarea_etiqueta.dart';
 import '../../../domain/entities/tarea_plantilla.dart';
 
 /// Diálogo para crear una nueva tarea. Si se le pasa [plantilla], precarga
@@ -13,6 +15,12 @@ class NuevaTareaDialog extends StatefulWidget {
   final KanbanRepository repository;
   final List<KanbanColumna> columnas;
   final List<Miembro> miembros;
+
+  /// Catálogo vigente de etiquetas — sirve para filtrar `plantilla?.etiquetaIds`
+  /// contra ids que de verdad existan (ver `_crear`): una plantilla puede
+  /// arrastrar ids de etiquetas ya eliminadas del tablero, y sin este
+  /// catálogo se colaban igual en la tarjeta nueva.
+  final List<TareaEtiqueta> etiquetas;
   final TareaPlantilla? plantilla;
 
   const NuevaTareaDialog({
@@ -20,6 +28,7 @@ class NuevaTareaDialog extends StatefulWidget {
     required this.repository,
     required this.columnas,
     required this.miembros,
+    this.etiquetas = const [],
     this.plantilla,
   });
 
@@ -28,6 +37,7 @@ class NuevaTareaDialog extends StatefulWidget {
     required KanbanRepository repository,
     required List<KanbanColumna> columnas,
     required List<Miembro> miembros,
+    List<TareaEtiqueta> etiquetas = const [],
     TareaPlantilla? plantilla,
   }) {
     return showDialog<int>(
@@ -37,6 +47,7 @@ class NuevaTareaDialog extends StatefulWidget {
         repository: repository,
         columnas: columnas,
         miembros: miembros,
+        etiquetas: etiquetas,
         plantilla: plantilla,
       ),
     );
@@ -53,9 +64,13 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
   late final _descripcionCtrl = TextEditingController(
     text: widget.plantilla?.descripcion ?? '',
   );
+  // Filtrado contra `widget.miembros` (el catálogo vigente): una plantilla
+  // puede referenciar a alguien ya eliminado del tablero, y sin este filtro
+  // ese id "seleccionado" quedaba invisible en los `FilterChip` (que solo
+  // listan miembros vigentes) pero se enviaba igual a `crearTarea`.
   late final Set<int> _miembroIdsSeleccionados = {
     ...?widget.plantilla?.miembroIds,
-  };
+  }..retainAll(widget.miembros.map((m) => m.id));
   // `_grupo`/`_estatus` ya no se eligen en este formulario (ver comentario
   // más abajo en `build`), pero siguen determinando con qué área/columna
   // se crea la tarjeta: heredado de la plantilla o, sin plantilla, vacío /
@@ -109,15 +124,12 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
           .length;
       if (ocupadas >= limite) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Ya hay ${ocupadas == 1 ? 'una tarjeta' : '$ocupadas tarjetas'} '
+          kanbanToast(
+            context,
+            'Ya hay ${ocupadas == 1 ? 'una tarjeta' : '$ocupadas tarjetas'} '
                 'en "${columna!.titulo}" (límite $limite). Elige otra '
                 'columna o créala y muévela después.',
-              ),
-              backgroundColor: KanbanColors.danger,
-            ),
+            ok: false,
           );
         }
         return;
@@ -134,9 +146,15 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
           estatus: _estatus,
           prioridad: _prioridad,
           grupo: _grupo ?? '',
-          asignadoPor: kUsuarioActualDemo,
+          asignadoPor: usuarioActual.value.nombre,
           miembroIds: _miembroIdsSeleccionados.toList(),
-          etiquetaIds: widget.plantilla?.etiquetaIds ?? const [],
+          // Filtrado contra `widget.etiquetas` por el mismo motivo que
+          // `_miembroIdsSeleccionados` arriba.
+          etiquetaIds: (widget.plantilla?.etiquetaIds ?? const [])
+              .where(
+                (id) => widget.etiquetas.any((e) => e.id == id),
+              )
+              .toList(),
           portada: widget.plantilla?.portada,
           fechaInicio: DateTime.now(),
           fechaVencimiento: _fechaVencimiento,
@@ -155,11 +173,10 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
       // nada a quien está creando una tarea.
       debugPrint('Error al crear tarea: $ex');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('No se pudo crear la tarea. Intenta de nuevo.'),
-            backgroundColor: KanbanColors.danger,
-          ),
+        kanbanToast(
+          context,
+          'No se pudo crear la tarea. Intenta de nuevo.',
+          ok: false,
         );
       }
     } finally {
@@ -290,7 +307,7 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
                       Expanded(
                         child: DropdownButtonFormField<TareaPrioridad>(
                           initialValue: _prioridad,
-                          decoration: _decoracion('Prioridad'),
+                          decoration: kanbanInputDecoration(label: 'Prioridad'),
                           items: [
                             for (final p in TareaPrioridad.values)
                               DropdownMenuItem(
@@ -372,35 +389,12 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
     );
   }
 
-  InputDecoration _decoracion(String label) {
-    return InputDecoration(
-      labelText: label,
-      labelStyle: TextStyle(fontSize: 12, color: KanbanColors.tdim),
-      isDense: true,
-      filled: true,
-      fillColor: KanbanColors.bg3,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: KanbanColors.borde),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: KanbanColors.borde),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: KanbanColors.accent, width: 2),
-      ),
-    );
-  }
-
   Widget _campo(String label, TextEditingController ctrl, {int maxLines = 1}) {
     return TextField(
       controller: ctrl,
       maxLines: maxLines,
       style: TextStyle(fontSize: 13, color: KanbanColors.texto),
-      decoration: _decoracion(label),
+      decoration: kanbanInputDecoration(label: label),
     );
   }
 }

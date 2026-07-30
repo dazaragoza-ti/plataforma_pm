@@ -69,9 +69,6 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
     if (elegido != null) setState(() => _rango = elegido);
   }
 
-  String _fecha(DateTime d) =>
-      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
-
   /// Mismo lenguaje visual que los chips activables del header del tablero
   /// (`_headerToggleChip`): fondo/borde de acento cuando hay un rango
   /// elegido, transparente cuando no — para que "hay un filtro aplicado"
@@ -105,7 +102,7 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
                 const SizedBox(width: 7),
                 Text(
                   activo
-                      ? '${_fecha(rango.start)} – ${_fecha(rango.end)}'
+                      ? '${kanbanFecha(rango.start)} – ${kanbanFecha(rango.end)}'
                       : 'Filtrar por fecha de inicio',
                   style: TextStyle(
                     fontSize: 12,
@@ -156,16 +153,37 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
             return !f.isBefore(rango.start) &&
                 !f.isAfter(rango.end.add(const Duration(days: 1)));
           }).toList();
+    // "Cumplimiento de fechas" mide `fechaVencimiento`/`fechaFinReal`, no
+    // `fechaInicio` — filtrar esa gráfica con el mismo `tareas` de arriba
+    // (por fecha de INICIO) podía excluir tareas cerradas dentro del rango
+    // pero iniciadas antes, o incluir tareas iniciadas en el rango que
+    // cerraron mucho después. Filtra por `fechaFinReal` en su lugar, para
+    // que el rango elegido de verdad acote lo que esta gráfica evalúa.
+    final tareasCumplimiento = rango == null
+        ? widget.tareas
+        : widget.tareas.where((t) {
+            final f = t.fechaFinReal;
+            if (f == null) return false;
+            return !f.isBefore(rango.start) &&
+                !f.isAfter(rango.end.add(const Duration(days: 1)));
+          }).toList();
     final columnas = widget.columnas;
     final miembros = widget.miembros;
 
+    // Un solo recorrido de `tareas` para los 4 conteos en vez de 4
+    // `.where().length` independientes (cada uno una pasada completa aparte
+    // sobre la misma lista).
     final total = tareas.length;
-    final completadas = tareas.where((t) => t.cerrada).length;
-    final vencidas = tareas.where((t) => t.vencida).length;
-    final enProceso = tareas
-        .where((t) => t.estatus == TareaEstatus.proceso)
-        .length;
-    final bloqueadas = tareas.where((t) => t.pausadaPorSubtarea).length;
+    var completadas = 0;
+    var vencidas = 0;
+    var enProceso = 0;
+    var bloqueadas = 0;
+    for (final t in tareas) {
+      if (t.cerrada) completadas++;
+      if (t.vencida) vencidas++;
+      if (t.estatus == TareaEstatus.proceso) enProceso++;
+      if (t.pausadaPorSubtarea) bloqueadas++;
+    }
     final porcentaje = total == 0 ? 0.0 : (completadas / total * 100);
 
     return SingleChildScrollView(
@@ -247,7 +265,7 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
               );
               final cumplimiento = _tarjeta(
                 'Cumplimiento de fechas (planeado vs. real)',
-                _graficaCumplimiento(tareas),
+                _graficaCumplimiento(tareasCumplimiento),
               );
               if (apilar) {
                 return Column(
@@ -292,10 +310,10 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
     const anchoMinimo = 170.0;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columnas = ((constraints.maxWidth + espacio) /
-                (anchoMinimo + espacio))
-            .floor()
-            .clamp(1, tarjetas.length);
+        final columnas =
+            ((constraints.maxWidth + espacio) / (anchoMinimo + espacio))
+                .floor()
+                .clamp(1, tarjetas.length);
         final filas = <Widget>[];
         for (var i = 0; i < tarjetas.length; i += columnas) {
           // La última fila, si queda incompleta (p. ej. 5 tarjetas en
@@ -407,10 +425,16 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
 
   Widget _graficaEstatus(List<Tarea> tareas, List<KanbanColumna> columnas) {
     if (tareas.isEmpty) return _sinDatos();
-    final conteos = {
-      for (final col in columnas)
-        col.estatus: tareas.where((t) => t.estatus == col.estatus).length,
+    // Un solo recorrido de `tareas` en vez de uno completo por columna
+    // (`tareas.where(...)` repetido `columnas.length` veces).
+    final conteos = <TareaEstatus, int>{
+      for (final col in columnas) col.estatus: 0,
     };
+    for (final t in tareas) {
+      if (conteos.containsKey(t.estatus)) {
+        conteos[t.estatus] = conteos[t.estatus]! + 1;
+      }
+    }
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -429,7 +453,8 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
                   if (conteos[col.estatus]! > 0)
                     PieChartSectionData(
                       value: conteos[col.estatus]!.toDouble(),
-                      color: (_kColorGraficaEstatus[col.estatus.id] ?? col.color),
+                      color:
+                          (_kColorGraficaEstatus[col.estatus.id] ?? col.color),
                       radius: 30,
                       title: '${conteos[col.estatus]}',
                       titleStyle: const TextStyle(
@@ -457,7 +482,9 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
                         width: 10,
                         height: 10,
                         decoration: BoxDecoration(
-                          color: (_kColorGraficaEstatus[col.estatus.id] ?? col.color),
+                          color:
+                              (_kColorGraficaEstatus[col.estatus.id] ??
+                              col.color),
                           shape: BoxShape.circle,
                         ),
                       ),
@@ -491,10 +518,13 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
 
   Widget _graficaPrioridad(List<Tarea> tareas) {
     if (tareas.isEmpty) return _sinDatos();
-    final conteos = {
-      for (final p in TareaPrioridad.values)
-        p: tareas.where((t) => t.prioridad == p).length,
+    // Un solo recorrido de `tareas` en vez de uno por cada prioridad.
+    final conteos = <TareaPrioridad, int>{
+      for (final p in TareaPrioridad.values) p: 0,
     };
+    for (final t in tareas) {
+      conteos[t.prioridad] = (conteos[t.prioridad] ?? 0) + 1;
+    }
     final maxY = conteos.values
         .fold<int>(0, (a, b) => a > b ? a : b)
         .toDouble();
@@ -597,10 +627,22 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
   /// la app en vez de una paleta categórica nueva).
   Widget _graficaCargaMiembros(List<Tarea> tareas, List<Miembro> miembros) {
     if (miembros.isEmpty || tareas.isEmpty) return _sinDatos();
+    // Un solo recorrido de `tareas` (mirando los miembros de cada una) en
+    // vez de un recorrido completo de `tareas` por cada integrante del
+    // catálogo (O(tareas·miembros) antes).
+    final porMiembroId = {for (final m in miembros) m.id: m};
+    final cantidadPorId = <int, int>{};
+    for (final t in tareas) {
+      for (final id in t.miembroIds) {
+        if (porMiembroId.containsKey(id)) {
+          cantidadPorId[id] = (cantidadPorId[id] ?? 0) + 1;
+        }
+      }
+    }
     final conteos = {
-      for (final m in miembros)
-        m: tareas.where((t) => t.miembroIds.contains(m.id)).length,
-    }..removeWhere((_, cantidad) => cantidad == 0);
+      for (final entry in cantidadPorId.entries)
+        porMiembroId[entry.key]!: entry.value,
+    };
     if (conteos.isEmpty) return _sinDatos();
 
     final entradas = conteos.entries.toList()
@@ -738,7 +780,10 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
                   color: KanbanColors.ok,
                 ),
               ),
-              Text('·', style: TextStyle(fontSize: 12, color: KanbanColors.tdim)),
+              Text(
+                '·',
+                style: TextStyle(fontSize: 12, color: KanbanColors.tdim),
+              ),
               Text(
                 '$conRetraso con retraso',
                 style: TextStyle(
@@ -749,7 +794,10 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
                       : KanbanColors.tdim,
                 ),
               ),
-              Text('·', style: TextStyle(fontSize: 12, color: KanbanColors.tdim)),
+              Text(
+                '·',
+                style: TextStyle(fontSize: 12, color: KanbanColors.tdim),
+              ),
               Text(
                 'promedio ${promedio >= 0 ? '+' : ''}'
                 '${promedio.toStringAsFixed(1)}d',
@@ -1018,7 +1066,11 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
         final b = bucketDe(t.fechaInicio!);
         if (b >= 0 && b < semanas) creadas[b]++;
       }
-      if (t.fechaFinReal != null) {
+      // `t.cerrada` además de `fechaFinReal != null`: si se reabrió la
+      // tarea, `fechaFinReal` no se limpia (se conserva para el
+      // historial), así que sin este chequeo seguiría contando como
+      // completada en la semana en que se cerró la primera vez.
+      if (t.cerrada && t.fechaFinReal != null) {
         final b = bucketDe(t.fechaFinReal!);
         if (b >= 0 && b < semanas) completadas[b]++;
       }
@@ -1038,7 +1090,9 @@ class _KanbanGraficasViewState extends State<KanbanGraficasView> {
     // trunca con `.toInt()`, se veían números y fechas repetidos varias
     // veces seguidas (más notorio en el eje X mientras más ancho el
     // gráfico). Ambos ejes ahora comparten el mismo paso que las líneas.
-    final double intervaloY = ((maxY + 1) / 4).clamp(1, double.infinity).toDouble();
+    final double intervaloY = ((maxY + 1) / 4)
+        .clamp(1, double.infinity)
+        .toDouble();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

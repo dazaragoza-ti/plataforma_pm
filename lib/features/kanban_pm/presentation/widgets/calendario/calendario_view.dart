@@ -35,6 +35,17 @@ const List<String> _kMeses = [
 /// widgets propios + `CustomPainter`.
 class CalendarioView extends StatefulWidget {
   final List<Tarea> tareas;
+
+  /// Universo ABSOLUTO de tareas — sin los filtros de vista del dashboard
+  /// (búsqueda, "Mis tareas", fechas, miembro, etc.) y SIN excluir
+  /// archivadas ni las de columnas archivadas — a diferencia de [tareas].
+  /// El guard anti-ciclo de dependencias y la ruta crítica se calculan
+  /// sobre esta lista, no sobre [tareas]: de lo contrario, una tarea
+  /// oculta por un filtro de vista (o archivada — `dependeDeIds` no se
+  /// limpia al archivar, solo al eliminar) podría ser el eslabón que
+  /// cierra un ciclo sin que el guard lo vea, dejando crear una
+  /// dependencia circular real en los datos.
+  final List<Tarea> todasLasTareas;
   final List<KanbanColumna> columnas;
   final KanbanRepository repository;
   final Future<void> Function() onRefresh;
@@ -50,6 +61,7 @@ class CalendarioView extends StatefulWidget {
   const CalendarioView({
     super.key,
     required this.tareas,
+    required this.todasLasTareas,
     required this.columnas,
     required this.repository,
     required this.onRefresh,
@@ -221,15 +233,12 @@ class _CalendarioViewState extends State<CalendarioView> {
   /// se nota después, abriendo cada una para ver su historial.
   void _avisarCascada(int movidas) {
     if (movidas == 0 || !mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          movidas == 1
-              ? 'Se recorrió 1 tarjeta sucesora para respetar la dependencia'
-              : 'Se recorrieron $movidas tarjetas sucesoras para respetar '
-                    'la dependencia',
-        ),
-      ),
+    kanbanToast(
+      context,
+      movidas == 1
+          ? 'Se recorrió 1 tarjeta sucesora para respetar la dependencia'
+          : 'Se recorrieron $movidas tarjetas sucesoras para respetar '
+                'la dependencia',
     );
   }
 
@@ -272,8 +281,11 @@ class _CalendarioViewState extends State<CalendarioView> {
     final idx = widget.tareas.indexWhere((t) => t.id == destinoId);
     if (idx == -1) return false;
     if (widget.tareas[idx].dependeDeIds.contains(origenId)) return false;
+    // `todasLasTareas` (no `widget.tareas`): el ciclo puede cerrarse a
+    // través de una tarea que un filtro de vista esté ocultando ahora
+    // mismo, y el guard tiene que verla igual.
     return !creariaCicloDependencia(
-      widget.tareas,
+      widget.todasLasTareas,
       dependienteId: destinoId,
       predecesoraId: origenId,
     );
@@ -313,18 +325,15 @@ class _CalendarioViewState extends State<CalendarioView> {
     if (destino.dependeDeIds.contains(origenId)) return;
 
     if (creariaCicloDependencia(
-      widget.tareas,
+      widget.todasLasTareas,
       dependienteId: destinoId,
       predecesoraId: origenId,
     )) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              'Esa dependencia crearía un ciclo — no se puede crear.',
-            ),
-            backgroundColor: KanbanColors.danger,
-          ),
+        kanbanToast(
+          context,
+          'Esa dependencia crearía un ciclo — no se puede crear.',
+          ok: false,
         );
       }
       return;
@@ -359,18 +368,10 @@ class _CalendarioViewState extends State<CalendarioView> {
     );
     await widget.onRefresh();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Dependencia eliminada'),
-        action: SnackBarAction(
-          label: 'Deshacer',
-          onPressed: () async {
-            await widget.repository.actualizarTarea(destino);
-            await widget.onRefresh();
-          },
-        ),
-      ),
-    );
+    kanbanToastAccion(context, 'Dependencia eliminada', 'Deshacer', () async {
+      await widget.repository.actualizarTarea(destino);
+      await widget.onRefresh();
+    });
   }
 
   /// Asa circular en el borde derecho de la barra planeada de [fila]: al
@@ -783,16 +784,12 @@ class _CalendarioViewState extends State<CalendarioView> {
     );
   }
 
-  String _fecha(DateTime? d) => d == null
-      ? ''
-      : '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
-
   /// Exporta el cronograma (planeado vs. real, ruta crítica) a CSV — la
   /// vista Lista ya tenía su propio export, pero acá había que abrir cada
   /// tarjeta o mirar las barras a ojo para sacar fechas planeadas vs.
   /// reales en limpio.
   void _exportarCsvGantt(GanttLayout layout) {
-    final rutaCritica = calcularRutaCritica(widget.tareas);
+    final rutaCritica = calcularRutaCritica(widget.todasLasTareas);
     final encabezado = const [
       'Tarea',
       'Columna',
@@ -810,10 +807,10 @@ class _CalendarioViewState extends State<CalendarioView> {
         [
           t.titulo,
           fila.columna.titulo,
-          _fecha(t.fechaInicio),
-          _fecha(t.fechaVencimiento),
-          _fecha(t.fechaInicioReal),
-          _fecha(t.fechaFinReal),
+          kanbanFecha(t.fechaInicio),
+          kanbanFecha(t.fechaVencimiento),
+          kanbanFecha(t.fechaInicioReal),
+          kanbanFecha(t.fechaFinReal),
           rutaCritica.contains(t.id) ? 'Sí' : 'No',
           '${(t.progreso * 100).round()}%',
         ].map(campoCsv).join(','),
@@ -821,16 +818,20 @@ class _CalendarioViewState extends State<CalendarioView> {
     }
     try {
       descargarCsv('gantt_kanban.csv', lineas.join('\r\n'));
-    } catch (_) {
+    } on UnsupportedError {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text(
-            'Exportar a CSV solo está disponible en la versión web.',
-          ),
-          backgroundColor: KanbanColors.danger,
-        ),
+      kanbanToast(
+        context,
+        'Exportar a CSV solo está disponible en la versión web.',
+        ok: false,
       );
+    } catch (_) {
+      // En web, cualquier otro fallo (bloqueo de pop-up, política de
+      // seguridad al crear el Blob/URL, etc.) no es "no disponible" — el
+      // mensaje de arriba sería falso y confundiría a quien sí está en la
+      // versión que debería soportarlo.
+      if (!mounted) return;
+      kanbanToast(context, 'No se pudo exportar el CSV. Intenta de nuevo.', ok: false);
     }
   }
 
@@ -927,7 +928,7 @@ class _CalendarioViewState extends State<CalendarioView> {
       columnas: widget.columnas,
       dayWidth: _zoom.dayWidth,
     );
-    final rutaCritica = calcularRutaCritica(widget.tareas);
+    final rutaCritica = calcularRutaCritica(widget.todasLasTareas);
 
     if (layoutNominal.filas.isEmpty) {
       _ultimoLayout = layoutNominal;

@@ -77,8 +77,18 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
     // duplicar estado) — se calcula fresco contra el `KanbanRepository` de
     // cada área justo antes de devolver la lista.
     final resultado = <Workspace>[];
-    for (final w in _workspaces) {
-      final tareas = await _repos[w.id]!.listarTareas();
+    // `List.of(_workspaces)` (una copia): este loop queda suspendido en cada
+    // `await`, y si en ese momento corre `eliminarWorkspace` mutando la
+    // lista viva con `removeWhere`, iterar directo sobre `_workspaces`
+    // lanza "Concurrent modification during iteration" en vez de
+    // simplemente reflejar el estado de antes de la eliminación.
+    for (final w in List.of(_workspaces)) {
+      // `_repos[w.id]` (no `!`): por la misma razón, la entrada puede
+      // desaparecer entre medias — forzar con `!` lanzaría un null-check en
+      // vez de simplemente omitir el área que ya no existe.
+      final repo = _repos[w.id];
+      if (repo == null) continue;
+      final tareas = await repo.listarTareas();
       resultado.add(
         w.copyWith(tareasCount: tareas.where((t) => !t.archivada).length),
       );
@@ -91,7 +101,9 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
     final todas = await listarWorkspaces();
     final resultado = <Workspace>[];
     for (final w in todas) {
-      final miembros = await _repos[w.id]!.listarMiembros();
+      final repo = _repos[w.id];
+      if (repo == null) continue;
+      final miembros = await repo.listarMiembros();
       if (miembros.any((m) => m.usuarioId == usuarioId)) {
         resultado.add(w);
       }

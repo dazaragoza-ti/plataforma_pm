@@ -28,4 +28,16 @@ class Miembro {
     colorAvatar: colorAvatar ?? this.colorAvatar,
     usuarioId: usuarioId,
   );
+
+  /// Por `id` (no por campos completos): dos instancias que representan al
+  /// mismo miembro pero llegaron de "fetches" distintos (p. ej. antes y
+  /// después de un `copyWith`) deben seguir siendo iguales para `Set`/`Map`
+  /// — sin esto (identidad por defecto de `Object`), `kanban_graficas_view`
+  /// podía terminar con dos llaves distintas para la misma persona si sus
+  /// datos venían de instancias diferentes.
+  @override
+  bool operator ==(Object other) => other is Miembro && other.id == id;
+
+  @override
+  int get hashCode => id.hashCode;
 }

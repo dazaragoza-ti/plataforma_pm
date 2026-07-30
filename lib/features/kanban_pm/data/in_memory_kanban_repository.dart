@@ -8,6 +8,7 @@ import '../domain/entities/tarea_etiqueta.dart';
 import '../domain/entities/tarea_plantilla.dart';
 import '../kanban_constants.dart';
 import 'kanban_repository.dart';
+import 'usuario_directorio.dart';
 
 /// Implementación en memoria con datos de ejemplo, útil para desarrollar y
 /// probar la UI sin backend real.
@@ -381,6 +382,10 @@ class InMemoryKanbanRepository implements KanbanRepository {
 
   /// Agrega una entrada al historial de la tarea [tareaId]. No falla si la
   /// tarea ya no existe (p. ej. una cascada que llega tarde tras borrarla).
+  /// El autor es la identidad simulada activa (`usuarioActual`), no una
+  /// constante fija: antes cada acción en vivo (crear, mover, marcar
+  /// checklist…) quedaba atribuida siempre a "J. Salazar" sin importar
+  /// quién estuviera realmente "conectado" en el selector de áreas.
   void _registrarHistorial(int tareaId, String mensaje) {
     final idx = _tareas.indexWhere((t) => t.id == tareaId);
     if (idx == -1) return;
@@ -389,7 +394,7 @@ class InMemoryKanbanRepository implements KanbanRepository {
         ..._tareas[idx].historial,
         HistorialEvento(
           id: _nextHistorialId++,
-          autor: kUsuarioActualDemo,
+          autor: usuarioActual.value.nombre,
           mensaje: mensaje,
           fecha: DateTime.now(),
         ),
@@ -419,33 +424,38 @@ class InMemoryKanbanRepository implements KanbanRepository {
   Future<List<Tarea>> listarTareas({String busqueda = ''}) async {
     await _latencia();
     final like = busqueda.trim().toLowerCase();
-    final base = like.isEmpty
-        ? _tareas
-        : _tareas
-              .where(
-                (t) =>
-                    t.titulo.toLowerCase().contains(like) ||
-                    t.grupo.toLowerCase().contains(like) ||
-                    t.miembroIds.any(
-                      (id) => _miembros
-                          .firstWhere(
-                            (m) => m.id == id,
-                            orElse: () => const Miembro(
-                              id: -1,
-                              nombre: '',
-                              colorAvatar: Colors.transparent,
-                            ),
-                          )
-                          .nombre
-                          .toLowerCase()
-                          .contains(like),
-                    ) ||
-                    _actividadesContienen(t.actividades, like),
-              )
-              .toList();
+    List<Tarea> base;
+    if (like.isEmpty) {
+      base = _tareas;
+    } else {
+      // Un solo `Map` de miembros en vez de un `firstWhere` por cada
+      // tarea (O(n·m) con el catálogo de miembros recorrido entero por
+      // cada tarjeta al escribir en el buscador).
+      final nombrePorMiembroId = {for (final m in _miembros) m.id: m.nombre};
+      base = _tareas
+          .where(
+            (t) =>
+                t.titulo.toLowerCase().contains(like) ||
+                t.grupo.toLowerCase().contains(like) ||
+                t.miembroIds.any(
+                  (id) =>
+                      nombrePorMiembroId[id]?.toLowerCase().contains(like) ??
+                      false,
+                ) ||
+                _actividadesContienen(t.actividades, like),
+          )
+          .toList();
+    }
     final resultado = List<Tarea>.of(base)
       ..sort((a, b) => a.orden.compareTo(b.orden));
     return List.unmodifiable(resultado);
+  }
+
+  @override
+  Future<Tarea?> obtenerTarea(int tareaId) async {
+    await _latencia();
+    final idx = _tareas.indexWhere((t) => t.id == tareaId);
+    return idx == -1 ? null : _tareas[idx];
   }
 
   @override
@@ -474,24 +484,10 @@ class InMemoryKanbanRepository implements KanbanRepository {
     int? posicion,
   }) async {
     await _latencia();
-    final idx = _indice(tareaId);
-    final origen = _tareas[idx].estatus;
-    final destinoTareas =
-        _tareas
-            .where((t) => t.id != tareaId && t.estatus == nuevoEstatus)
-            .toList()
-          ..sort((a, b) => a.orden.compareTo(b.orden));
-    final pos = (posicion ?? destinoTareas.length).clamp(
-      0,
-      destinoTareas.length,
-    );
-    destinoTareas.insert(pos, _tareas[idx]);
-    for (var i = 0; i < destinoTareas.length; i++) {
-      final tIdx = _tareas.indexWhere((t) => t.id == destinoTareas[i].id);
-      _tareas[tIdx] = _tareas[tIdx].copyWith(estatus: nuevoEstatus, orden: i);
-    }
+    final origen = _tareas[_indice(tareaId)].estatus;
+    final movida = _reubicarEnColumna(tareaId, nuevoEstatus, posicion: posicion);
+    if (!movida) return;
     if (origen != nuevoEstatus) {
-      _renumerarColumna(origen);
       _registrarFechaRealDeEstatus(tareaId, nuevoEstatus);
       // El usuario tomó el control manualmente: si la tarjeta venía
       // auto-pausada por una subtarea, esa bandera ya no aplica una vez
@@ -513,17 +509,79 @@ class InMemoryKanbanRepository implements KanbanRepository {
     }
   }
 
-  /// Sella `fechaInicioReal`/`fechaFinReal` la primera vez que una tarea
-  /// entra a "proceso" o a "terminado"/"revisado", para poder comparar
-  /// tiempo planeado vs. tiempo real en el Gantt. No pisa un sello ya
-  /// existente: si la tarjeta se regresa y se vuelve a mover, se conserva
-  /// el primer registro histórico.
+  /// Mueve [tareaId] a [nuevoEstatus] reasignando `orden` en la columna
+  /// destino (inserta en [posicion], o al final si es `null`) y
+  /// renumerando la columna de origen si cambia — la lógica de
+  /// posicionamiento de [moverTarea], factorizada aquí para que
+  /// [_recalcularBloqueoPorSubtareas] (auto-pausa/reanudación) la
+  /// comparta en vez de reinventarla: antes cambiaba `estatus` con un
+  /// `copyWith` suelto sin tocar `orden`, dejando la tarjeta con el
+  /// mismo número que ya tenía en su columna anterior — dos tarjetas
+  /// distintas con el mismo `orden` en la columna destino (cada columna
+  /// numera su propio 0..n-1 de forma independiente). No aplica latencia
+  /// simulada ni ningún efecto secundario: eso lo maneja cada llamador.
+  ///
+  /// Devuelve `false` (y no hace nada) si [nuevoEstatus] es una columna
+  /// archivada: ninguna tarjeta debe terminar ahí sea cual sea el camino
+  /// que la mande — a diferencia de un movimiento manual por
+  /// arrastre/menú (que solo ofrece columnas visibles como destino), los
+  /// caminos automáticos/semiautomáticos (auto-pausa por subtarea,
+  /// auto-completado por checklist, los botones Iniciar/Pausar/Reanudar/
+  /// Reabrir del detalle) no tienen forma de pedirle confirmación a
+  /// nadie, y la tarjeta quedaría invisible sin aviso (no aparece en el
+  /// tablero ni en "Tarjetas archivadas", porque `archivada` de la
+  /// tarjeta en sí sigue en `false`). Centralizado aquí (el único punto
+  /// por el que pasa cualquier cambio de `estatus`) en vez de repetido en
+  /// cada llamador, para que ningún camino nuevo pueda olvidarlo.
+  bool _reubicarEnColumna(
+    int tareaId,
+    TareaEstatus nuevoEstatus, {
+    int? posicion,
+  }) {
+    if (_columnaArchivada(nuevoEstatus)) return false;
+    final idx = _indice(tareaId);
+    final origen = _tareas[idx].estatus;
+    final destinoTareas =
+        _tareas
+            .where((t) => t.id != tareaId && t.estatus == nuevoEstatus)
+            .toList()
+          ..sort((a, b) => a.orden.compareTo(b.orden));
+    final pos = (posicion ?? destinoTareas.length).clamp(
+      0,
+      destinoTareas.length,
+    );
+    destinoTareas.insert(pos, _tareas[idx]);
+    for (var i = 0; i < destinoTareas.length; i++) {
+      final tIdx = _tareas.indexWhere((t) => t.id == destinoTareas[i].id);
+      _tareas[tIdx] = _tareas[tIdx].copyWith(estatus: nuevoEstatus, orden: i);
+    }
+    if (origen != nuevoEstatus) {
+      _renumerarColumna(origen);
+    }
+    return true;
+  }
+
+  /// `true` si la columna de [estatus] está archivada — ver el guard
+  /// dentro de [_reubicarEnColumna].
+  bool _columnaArchivada(TareaEstatus estatus) =>
+      _columnas.any((c) => c.estatus == estatus && c.archivada);
+
+  /// Sella `fechaInicioReal` la PRIMERA vez que una tarea entra a
+  /// "proceso" (no se vuelve a tocar en cierres posteriores: representa
+  /// cuándo arrancó el trabajo real, no cuándo se retomó tras reabrirla).
+  /// `fechaFinReal`, en cambio, se actualiza en CADA cierre — incluido un
+  /// recierre tras reabrir la tarea — para que siempre refleje el cierre
+  /// vigente. `t.cerrada` (no "¿ya tiene fechaFinReal?") es el criterio en
+  /// todo el módulo para decidir si ese sello sigue siendo válido (ver
+  /// `finRealEfectivoDe`/`kanban_graficas_view._graficaCumplimiento`): si
+  /// aquí se dejara el sello del primer cierre sin actualizar, un
+  /// segundo cierre real quedaría invisible para esos cálculos.
   void _registrarFechaRealDeEstatus(int tareaId, TareaEstatus nuevoEstatus) {
     final idx = _indice(tareaId);
     final t = _tareas[idx];
     if (nuevoEstatus == TareaEstatus.proceso && t.fechaInicioReal == null) {
       _tareas[idx] = t.copyWith(fechaInicioReal: DateTime.now());
-    } else if (nuevoEstatus.esCerrado && t.fechaFinReal == null) {
+    } else if (nuevoEstatus.esCerrado) {
       _tareas[idx] = t.copyWith(
         fechaInicioReal: t.fechaInicioReal ?? DateTime.now(),
         fechaFinReal: DateTime.now(),
@@ -919,6 +977,11 @@ class InMemoryKanbanRepository implements KanbanRepository {
     final t = _tareas[idx];
     if (t.cerrada || t.archivada || t.actividades.isEmpty) return;
     if (!t.actividades.every((a) => a.terminada)) return;
+    // Ver el comentario de `_reubicarEnColumna`: si "Terminado" está
+    // archivada, no autocompletar hacia ahí (la tarjeta quedaría
+    // invisible sin aviso) — se deja pendiente hasta que se desarchive
+    // esa columna.
+    if (_columnaArchivada(TareaEstatus.terminado)) return;
     await moverTarea(tareaId, TareaEstatus.terminado);
     _registrarHistorial(
       tareaId,
@@ -939,10 +1002,15 @@ class InMemoryKanbanRepository implements KanbanRepository {
     }
     final bloqueada = t.tieneSubtareaBloqueante;
     if (bloqueada && t.estatus != TareaEstatus.pausa) {
-      _tareas[idx] = t.copyWith(
-        estatus: TareaEstatus.pausa,
+      // Ver `_columnaArchivada`: no autopausar dentro de una columna
+      // archivada. La tarjeta se queda donde está hasta que se
+      // desarchive "Pausa" o el bloqueo se resuelva de otra forma.
+      if (_columnaArchivada(TareaEstatus.pausa)) return;
+      final estatusAnterior = t.estatus;
+      _reubicarEnColumna(tareaId, TareaEstatus.pausa);
+      _tareas[_indice(tareaId)] = _tareas[_indice(tareaId)].copyWith(
         pausadaPorSubtarea: true,
-        estatusAntesDePausa: t.estatus,
+        estatusAntesDePausa: estatusAnterior,
       );
       _registrarHistorial(
         tareaId,
@@ -951,11 +1019,15 @@ class InMemoryKanbanRepository implements KanbanRepository {
     } else if (!bloqueada &&
         t.pausadaPorSubtarea &&
         t.estatus == TareaEstatus.pausa) {
-      _tareas[idx] = t.copyWith(
-        estatus: t.estatusAntesDePausa ?? TareaEstatus.proceso,
+      final destino = t.estatusAntesDePausa ?? TareaEstatus.proceso;
+      // Mismo motivo que arriba: no reanudar hacia una columna archivada.
+      if (_columnaArchivada(destino)) return;
+      _reubicarEnColumna(tareaId, destino);
+      _tareas[_indice(tareaId)] = _tareas[_indice(tareaId)].copyWith(
         pausadaPorSubtarea: false,
         limpiarEstatusAntesDePausa: true,
       );
+      _registrarFechaRealDeEstatus(tareaId, destino);
       _registrarHistorial(tareaId, 'Se reanudó automáticamente');
     }
   }
@@ -977,8 +1049,9 @@ class InMemoryKanbanRepository implements KanbanRepository {
       estatus: estatus,
       titulo: nombre,
       icono: Icons.list_alt_rounded,
-      color: kColorPaletteEtiquetas[_columnas.length %
-          kColorPaletteEtiquetas.length],
+      color:
+          kColorPaletteEtiquetas[_columnas.length %
+              kColorPaletteEtiquetas.length],
     );
     _columnas.add(columna);
     return columna;
@@ -1009,9 +1082,22 @@ class InMemoryKanbanRepository implements KanbanRepository {
   Future<void> reordenarColumnas(List<TareaEstatus> nuevoOrden) async {
     await _latencia();
     final porEstatus = {for (final c in _columnas) c.estatus: c};
+    final reordenadas = nuevoOrden
+        .map((e) => porEstatus[e])
+        .whereType<KanbanColumna>()
+        .toList();
+    // Si `nuevoOrden` no trae TODAS las columnas existentes (un estatus
+    // desconocido o simplemente faltante), las que falten no se
+    // descartan: antes un `nuevoOrden` incompleto borraba esas columnas
+    // del tablero por completo en vez de solo dejarlas sin reordenar.
+    final estatusIncluidos = reordenadas.map((c) => c.estatus).toSet();
+    final faltantes = _columnas.where(
+      (c) => !estatusIncluidos.contains(c.estatus),
+    );
     _columnas
       ..clear()
-      ..addAll(nuevoOrden.map((e) => porEstatus[e]).whereType<KanbanColumna>());
+      ..addAll(reordenadas)
+      ..addAll(faltantes);
   }
 
   @override
@@ -1020,11 +1106,16 @@ class InMemoryKanbanRepository implements KanbanRepository {
     int? limite,
   ) async {
     await _latencia();
+    // Un límite negativo no tiene sentido (llega aquí solo si se escribió
+    // un "-" en el campo — `TextInputType.number` no lo bloquea de por
+    // sí): se trata igual que "sin límite" en vez de guardar un valor
+    // absurdo.
+    final limiteValido = (limite != null && limite < 0) ? null : limite;
     final idx = _columnas.indexWhere((c) => c.estatus == estatus);
     if (idx == -1) return;
     _columnas[idx] = _columnas[idx].copyWith(
-      limiteWip: limite,
-      limpiarLimiteWip: limite == null,
+      limiteWip: limiteValido,
+      limpiarLimiteWip: limiteValido == null,
     );
   }
 
@@ -1038,7 +1129,12 @@ class InMemoryKanbanRepository implements KanbanRepository {
   Future<int> crearEtiqueta(String nombre, Color color) async {
     await _latencia();
     final id = _nextEtiquetaId++;
-    _etiquetas.add(TareaEtiqueta(id: id, nombre: nombre.trim(), color: color));
+    // Mismo fallback que `crearColumna` para un nombre vacío: evita una
+    // etiqueta sin texto que sería invisible/inseleccionable en la UI.
+    final nombreValido = nombre.trim().isEmpty
+        ? 'Nueva etiqueta'
+        : nombre.trim();
+    _etiquetas.add(TareaEtiqueta(id: id, nombre: nombreValido, color: color));
     return id;
   }
 
@@ -1058,6 +1154,18 @@ class InMemoryKanbanRepository implements KanbanRepository {
       if (_tareas[i].etiquetaIds.contains(etiquetaId)) {
         _tareas[i] = _tareas[i].copyWith(
           etiquetaIds: _tareas[i].etiquetaIds
+              .where((id) => id != etiquetaId)
+              .toList(),
+        );
+      }
+    }
+    // También de las plantillas: sin esto, una plantilla seguía arrastrando
+    // el id ya eliminado para siempre, y cada tarjeta creada desde ella
+    // heredaba un id de etiqueta fantasma sin ningún aviso.
+    for (var i = 0; i < _plantillas.length; i++) {
+      if (_plantillas[i].etiquetaIds.contains(etiquetaId)) {
+        _plantillas[i] = _plantillas[i].copyWith(
+          etiquetaIds: _plantillas[i].etiquetaIds
               .where((id) => id != etiquetaId)
               .toList(),
         );
@@ -1119,6 +1227,16 @@ class InMemoryKanbanRepository implements KanbanRepository {
         actividades: _sinResponsableEnArbol(_tareas[i].actividades, miembroId),
       );
       _recalcularBloqueoPorSubtareas(_tareas[i].id);
+    }
+    // También de las plantillas — mismo motivo que en `eliminarEtiqueta`.
+    for (var i = 0; i < _plantillas.length; i++) {
+      if (_plantillas[i].miembroIds.contains(miembroId)) {
+        _plantillas[i] = _plantillas[i].copyWith(
+          miembroIds: _plantillas[i].miembroIds
+              .where((id) => id != miembroId)
+              .toList(),
+        );
+      }
     }
   }
 

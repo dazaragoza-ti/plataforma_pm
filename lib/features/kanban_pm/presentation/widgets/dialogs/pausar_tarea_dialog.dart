@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../kanban_constants.dart';
 import '../../../data/kanban_repository.dart';
 import '../../../domain/entities/tarea.dart';
+import 'kanban_alert_dialog.dart';
 
 /// Diálogo de confirmación al pausar una tarea (al arrastrarla a la columna
 /// Pausa o al usar el botón "Pausar" del detalle): recuerda qué actividades
@@ -22,10 +23,8 @@ class PausarTareaDialog {
     if (!hayPendientes) return true;
     final resultado = await showDialog<bool>(
       context: context,
-      builder: (_) => _PausarTareaDialogContent(
-        repository: repository,
-        tarea: tarea,
-      ),
+      builder: (_) =>
+          _PausarTareaDialogContent(repository: repository, tarea: tarea),
     );
     return resultado ?? false;
   }
@@ -45,8 +44,7 @@ class _PausarTareaDialogContent extends StatefulWidget {
       _PausarTareaDialogContentState();
 }
 
-class _PausarTareaDialogContentState
-    extends State<_PausarTareaDialogContent> {
+class _PausarTareaDialogContentState extends State<_PausarTareaDialogContent> {
   final _notaCtrl = TextEditingController();
   int? _actividadId;
   bool _guardando = false;
@@ -78,10 +76,8 @@ class _PausarTareaDialogContentState
   @override
   Widget build(BuildContext context) {
     final pendientes = widget.tarea.actividades.where((a) => !a.terminada);
-    return AlertDialog(
-      backgroundColor: KanbanColors.bg2,
-      surfaceTintColor: Colors.transparent,
-      title: Text('Pausar tarea', style: TextStyle(color: KanbanColors.texto)),
+    return kanbanAlertDialog(
+      titulo: 'Pausar tarea',
       content: SizedBox(
         width: 380,
         child: Column(
@@ -125,15 +121,8 @@ class _PausarTareaDialogContentState
               controller: _notaCtrl,
               maxLines: 3,
               style: TextStyle(fontSize: 13, color: KanbanColors.texto),
-              decoration: InputDecoration(
-                hintText: '¿Por qué se pausa? (opcional)',
-                isDense: true,
-                filled: true,
-                fillColor: KanbanColors.bg3,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: KanbanColors.borde),
-                ),
+              decoration: kanbanInputDecoration(
+                hint: '¿Por qué se pausa? (opcional)',
               ),
             ),
           ],
@@ -141,9 +130,7 @@ class _PausarTareaDialogContentState
       ),
       actions: [
         TextButton(
-          onPressed: _guardando
-              ? null
-              : () => Navigator.of(context).pop(false),
+          onPressed: _guardando ? null : () => Navigator.of(context).pop(false),
           child: const Text('Cancelar'),
         ),
         ElevatedButton(

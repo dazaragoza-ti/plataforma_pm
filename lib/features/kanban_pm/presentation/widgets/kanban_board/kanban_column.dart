@@ -25,11 +25,21 @@ double? direccionAutoscroll({
 
 /// Columna del tablero (TAREAS / PROCESO / PAUSA / TERMINADO / REVISADO),
 /// con look y comportamiento estilo Trello: título editable, menú de lista
-/// (renombrar/archivar/mover), composer de alta rápida al pie, y arrastre
-/// de tarjetas a una posición exacta dentro o entre columnas.
+/// (renombrar/archivar/límite de WIP), y arrastre de listas y de tarjetas a
+/// una posición exacta dentro o entre columnas.
 class KanbanColumnView extends StatefulWidget {
   final KanbanColumna columna;
   final List<Tarea> tareas;
+
+  /// Total real de tarjetas de esta columna sin los filtros de vista del
+  /// dashboard (búsqueda, "Mis tareas", miembro, etc.) — `null` (o igual a
+  /// `tareas.length`) cuando no hay ningún filtro activo. El contador y el
+  /// aviso de límite de WIP del encabezado lo usan en vez de
+  /// `tareas.length`: si no, con un filtro activo que oculte tarjetas de
+  /// esta columna, el contador mostraría menos de las que realmente hay y
+  /// el aviso de "límite excedido" no aparecería aunque sí se haya pasado.
+  final int? totalReal;
+
   /// Ancho de la columna. En desktop es un valor fijo cómodo para varias
   /// columnas visibles a la vez; en móvil el llamador pasa un ancho cercano
   /// al de la pantalla (con un "peek" de la siguiente columna) para que el
@@ -39,7 +49,14 @@ class KanbanColumnView extends StatefulWidget {
   final Map<int, TareaEtiqueta> etiquetasPorId;
   final Map<int, Miembro> miembrosPorId;
   final void Function(Tarea tarea) onTapTarea;
-  final void Function(Tarea tarea, TareaEstatus destino, int posicion)
+  /// `antesDeId` (no un índice numérico crudo) identifica dónde soltar la
+  /// tarjeta dentro de la columna destino: el id de la tarjeta que debe
+  /// quedar justo después (`null` = al final). Se usa un id de tarjeta
+  /// real como ancla, en vez de un índice sobre `tareas` (que puede venir
+  /// ya angostada por los filtros de vista del tablero), para que la
+  /// posición no se desfase si algún filtro oculta tarjetas de en medio
+  /// de esta misma columna.
+  final void Function(Tarea tarea, TareaEstatus destino, {int? antesDeId})
   onReordenar;
   final void Function(String nuevoTitulo) onRenombrar;
   final VoidCallback onArchivarColumna;
@@ -52,6 +69,7 @@ class KanbanColumnView extends StatefulWidget {
     super.key,
     required this.columna,
     required this.tareas,
+    this.totalReal,
     this.ancho = 280,
     this.etiquetasPorId = const {},
     this.miembrosPorId = const {},
@@ -102,43 +120,50 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
     final ctrl = TextEditingController(
       text: widget.columna.limiteWip?.toString() ?? '',
     );
-    // El campo vacío es "sin límite": no hace falta un botón aparte para
-    // quitarlo, basta con borrar el número y guardar.
-    final confirmado = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: KanbanColors.bg2,
-        surfaceTintColor: Colors.transparent,
-        title: Text(
-          'Límite de WIP',
-          style: TextStyle(color: KanbanColors.texto),
+    try {
+      // El campo vacío es "sin límite": no hace falta un botón aparte para
+      // quitarlo, basta con borrar el número y guardar.
+      final confirmado = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: KanbanColors.bg2,
+          surfaceTintColor: Colors.transparent,
+          title: Text(
+            'Límite de WIP',
+            style: TextStyle(color: KanbanColors.texto),
+          ),
+          content: TextField(
+            controller: ctrl,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            style: TextStyle(color: KanbanColors.texto),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: 'Sin límite',
+              hintStyle: TextStyle(color: KanbanColors.tdim),
+              helperText: 'Aviso visual: no impide soltar una tarjeta de más.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Guardar'),
+            ),
+          ],
         ),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          keyboardType: TextInputType.number,
-          style: TextStyle(color: KanbanColors.texto),
-          decoration: InputDecoration(
-            isDense: true,
-            hintText: 'Sin límite',
-            hintStyle: TextStyle(color: KanbanColors.tdim),
-            helperText: 'Aviso visual: no impide soltar una tarjeta de más.',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Guardar'),
-          ),
-        ],
-      ),
-    );
-    if (confirmado == true) {
-      widget.onCambiarLimiteWip?.call(int.tryParse(ctrl.text.trim()));
+      );
+      if (confirmado == true) {
+        widget.onCambiarLimiteWip?.call(int.tryParse(ctrl.text.trim()));
+      }
+    } finally {
+      // Sin esto, cada vez que se abre este diálogo quedaba un
+      // `TextEditingController` vivo sin liberar (creado local a este
+      // método, nunca referenciado por `dispose()` del State).
+      ctrl.dispose();
     }
   }
 
@@ -169,11 +194,18 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
   }
 
   void _manejarDrop(Tarea arrastrada, int gapIndex) {
-    final origenIdx = widget.tareas.indexWhere((t) => t.id == arrastrada.id);
-    final posicion = (origenIdx != -1 && gapIndex > origenIdx)
-        ? gapIndex - 1
-        : gapIndex;
-    widget.onReordenar(arrastrada, widget.columna.estatus, posicion);
+    // Ancla = id de la primera tarjeta VISIBLE (que no sea la propia
+    // arrastrada, que sigue apareciendo en `widget.tareas` en su lugar de
+    // origen mientras se arrastra) a partir del hueco donde se soltó.
+    // `null` si se soltó después de todas — se inserta al final.
+    int? antesDeId;
+    for (var i = gapIndex; i < widget.tareas.length; i++) {
+      if (widget.tareas[i].id != arrastrada.id) {
+        antesDeId = widget.tareas[i].id;
+        break;
+      }
+    }
+    widget.onReordenar(arrastrada, widget.columna.estatus, antesDeId: antesDeId);
   }
 
   Widget _gap(int index) {
@@ -218,9 +250,13 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
     );
   }
 
+  /// Total real de la columna (ver [KanbanColumnView.totalReal]) — cae a
+  /// `tareas.length` cuando no se pasó (sin filtros de vista activos, los
+  /// dos números coinciden de todas formas).
+  int get _totalReal => widget.totalReal ?? widget.tareas.length;
+
   bool get _wipExcedido =>
-      widget.columna.limiteWip != null &&
-      widget.tareas.length > widget.columna.limiteWip!;
+      widget.columna.limiteWip != null && _totalReal > widget.columna.limiteWip!;
 
   Widget _filaTitulo() {
     final limite = widget.columna.limiteWip;
@@ -240,9 +276,7 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
         ),
         const SizedBox(width: 6),
         Text(
-          limite == null
-              ? '${widget.tareas.length}'
-              : '${widget.tareas.length}/$limite',
+          limite == null ? '$_totalReal' : '$_totalReal/$limite',
           style: TextStyle(
             fontSize: 13,
             fontWeight: _wipExcedido ? FontWeight.bold : FontWeight.w500,
@@ -360,15 +394,25 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
   Widget _tituloArrastrable() {
     final childWhenDragging = Opacity(opacity: 0.3, child: _filaTitulo());
     final child = InkWell(onTap: _iniciarEdicionTitulo, child: _filaTitulo());
-    final esMovil = MediaQuery.sizeOf(context).width < 600;
+    final esMovil = MediaQuery.sizeOf(context).width < kUmbralMovilKanban;
     void onDragStarted() => setState(() => _arrastrandoColumna = true);
     void onDragTerminado() => setState(() => _arrastrandoColumna = false);
+    // Igual que en `_ListaTarjetas._tarjeta`: `onDragUpdate` reporta la
+    // posición del dedo/mouse en cada frame de ESTE arrastre, sin depender
+    // de que haya un `DragTarget` renderizado justo debajo. Sin esto, el
+    // autoscroll horizontal solo se disparaba al pasar por la franja
+    // angosta entre columnas (`_columnaGap`), y se quedaba callado al pasar
+    // por el cuerpo de otra columna — justo donde hace falta para revelar
+    // columnas fuera de pantalla.
+    void onDragUpdate(DragUpdateDetails details) =>
+        widget.onArrastreGlobalHorizontal?.call(details.globalPosition);
     return esMovil
         ? LongPressDraggable<KanbanColumna>(
             data: widget.columna,
             feedback: _previewColumna(),
             childWhenDragging: childWhenDragging,
             onDragStarted: onDragStarted,
+            onDragUpdate: onDragUpdate,
             onDragEnd: (_) => onDragTerminado(),
             onDraggableCanceled: (_, _) => onDragTerminado(),
             child: child,
@@ -378,6 +422,7 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
             feedback: _previewColumna(),
             childWhenDragging: childWhenDragging,
             onDragStarted: onDragStarted,
+            onDragUpdate: onDragUpdate,
             onDragEnd: (_) => onDragTerminado(),
             onDraggableCanceled: (_, _) => onDragTerminado(),
             child: child,
@@ -431,7 +476,7 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
                 : _tituloArrastrable(),
           ),
           PopupMenuButton<String>(
-            tooltip: 'Menú de la lista',
+            tooltip: 'Menú de la lista "${widget.columna.titulo}"',
             padding: EdgeInsets.zero,
             icon: Icon(
               Icons.more_horiz_rounded,
@@ -473,83 +518,92 @@ class _KanbanColumnViewState extends State<KanbanColumnView> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: widget.ancho,
-      decoration: BoxDecoration(
-        color: KanbanColors.bg3ConFondo,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: _wipExcedido ? KanbanColors.danger : KanbanColors.borde,
-          width: _wipExcedido ? 1.5 : 1,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _header(),
-          Expanded(
-            // Mientras la lista se arrastra (ver [_tituloArrastrable]), el
-            // contenido real viaja en el `feedback` pegado al cursor; acá se
-            // deja solo un hueco visual para no duplicar las tarjetas en dos
-            // sitios a la vez ni competir con sus propios `DragTarget`.
-            child: _arrastrandoColumna
-                ? Container(
-                    margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-                    decoration: BoxDecoration(
-                      color: KanbanColors.bg2.withValues(alpha: 0.4),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: KanbanColors.borde,
-                        style: BorderStyle.solid,
-                      ),
-                    ),
-                  )
-                : DragTarget<Tarea>(
-                    onWillAcceptWithDetails: (_) => true,
-                    onAcceptWithDetails: (details) {
-                      _detenerAutoscroll();
-                      _manejarDrop(details.data, widget.tareas.length);
-                    },
-                    onMove: (details) {
-                      final box = context.findRenderObject() as RenderBox?;
-                      if (box == null) return;
-                      _manejarAutoscroll(
-                        details.offset,
-                        box.localToGlobal(Offset.zero) & box.size,
-                      );
-                      widget.onArrastreGlobalHorizontal?.call(details.offset);
-                    },
-                    onLeave: (_) => _detenerAutoscroll(),
-                    builder: (context, candidateData, rejectedData) {
-                      return Stack(
-                        children: [
-                          Positioned.fill(
-                            child: Container(
-                              color: candidateData.isNotEmpty
-                                  ? KanbanColors.accentLight.withValues(
-                                      alpha: 0.35,
-                                    )
-                                  : Colors.transparent,
-                            ),
-                          ),
-                          _ListaTarjetas(
-                            scrollController: _scrollCtrl,
-                            tareas: widget.tareas,
-                            etiquetasPorId: widget.etiquetasPorId,
-                            miembrosPorId: widget.miembrosPorId,
-                            gapBuilder: _gap,
-                            onTapTarea: widget.onTapTarea,
-                            onArchivarTarjeta: widget.onArchivarTarjeta,
-                            onEliminarTarjeta: widget.onEliminarTarjeta,
-                            onArrastreHorizontal:
-                                widget.onArrastreGlobalHorizontal,
-                          ),
-                        ],
-                      );
-                    },
-                  ),
+    return Semantics(
+      // Descripción de la lista como conjunto (título + cuántas tarjetas
+      // tiene) para quien navega el tablero con lector de pantalla — antes
+      // no había ninguna, solo los textos sueltos del encabezado.
+      label:
+          'Lista ${widget.columna.titulo}, ${widget.tareas.length} '
+          'tarjeta${widget.tareas.length == 1 ? '' : 's'}',
+      container: true,
+      child: Container(
+        width: widget.ancho,
+        decoration: BoxDecoration(
+          color: KanbanColors.bg3ConFondo,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: _wipExcedido ? KanbanColors.danger : KanbanColors.borde,
+            width: _wipExcedido ? 1.5 : 1,
           ),
-        ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _header(),
+            Expanded(
+              // Mientras la lista se arrastra (ver [_tituloArrastrable]), el
+              // contenido real viaja en el `feedback` pegado al cursor; acá se
+              // deja solo un hueco visual para no duplicar las tarjetas en dos
+              // sitios a la vez ni competir con sus propios `DragTarget`.
+              child: _arrastrandoColumna
+                  ? Container(
+                      margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                      decoration: BoxDecoration(
+                        color: KanbanColors.bg2.withValues(alpha: 0.4),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: KanbanColors.borde,
+                          style: BorderStyle.solid,
+                        ),
+                      ),
+                    )
+                  : DragTarget<Tarea>(
+                      onWillAcceptWithDetails: (_) => true,
+                      onAcceptWithDetails: (details) {
+                        _detenerAutoscroll();
+                        _manejarDrop(details.data, widget.tareas.length);
+                      },
+                      onMove: (details) {
+                        final box = context.findRenderObject() as RenderBox?;
+                        if (box == null) return;
+                        _manejarAutoscroll(
+                          details.offset,
+                          box.localToGlobal(Offset.zero) & box.size,
+                        );
+                        widget.onArrastreGlobalHorizontal?.call(details.offset);
+                      },
+                      onLeave: (_) => _detenerAutoscroll(),
+                      builder: (context, candidateData, rejectedData) {
+                        return Stack(
+                          children: [
+                            Positioned.fill(
+                              child: Container(
+                                color: candidateData.isNotEmpty
+                                    ? KanbanColors.accentLight.withValues(
+                                        alpha: 0.35,
+                                      )
+                                    : Colors.transparent,
+                              ),
+                            ),
+                            _ListaTarjetas(
+                              scrollController: _scrollCtrl,
+                              tareas: widget.tareas,
+                              etiquetasPorId: widget.etiquetasPorId,
+                              miembrosPorId: widget.miembrosPorId,
+                              gapBuilder: _gap,
+                              onTapTarea: widget.onTapTarea,
+                              onArchivarTarjeta: widget.onArchivarTarjeta,
+                              onEliminarTarjeta: widget.onEliminarTarjeta,
+                              onArrastreHorizontal:
+                                  widget.onArrastreGlobalHorizontal,
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -629,7 +683,7 @@ class _ListaTarjetas extends StatelessWidget {
     // se queda quieto un momento, como en Trello. En desktop se deja el
     // `Draggable` normal: ahí el arrastre parte de un click+mantener del
     // mouse, que no compite con ningún gesto de scroll.
-    final esMovil = MediaQuery.sizeOf(context).width < 600;
+    final esMovil = MediaQuery.sizeOf(context).width < kUmbralMovilKanban;
     // `onDragUpdate` viene del propio `Draggable` (la posición del dedo/
     // mouse durante SU arrastre), no de un `DragTarget.onMove`: este
     // último solo se dispara mientras el cursor está encima de un

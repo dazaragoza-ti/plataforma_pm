@@ -45,6 +45,19 @@ mixin _KanbanDashboardFiltrosMixin on _KanbanDashboardDatosMixin {
     // Sin este llamado, renombrar o recolorear una etiqueta desde este
     // diálogo no se veía reflejado hasta recargar toda la página.
     await _cargarColumnasYEtiquetas();
+    // Si se eliminó una etiqueta que estaba en el filtro activo, hay que
+    // quitarla de `_etiquetaIdsFiltro` — si no, el filtro seguía
+    // "apuntando" a un id que ya no existe en ningún lado, y el tablero
+    // se quedaba mostrando cero tarjetas en silencio, sin ningún filtro
+    // visible en la UI que explicara por qué.
+    final idsVigentes = _etiquetas.map((e) => e.id).toSet();
+    if (_etiquetaIdsFiltro.any((id) => !idsVigentes.contains(id))) {
+      setState(() {
+        _etiquetaIdsFiltro = _etiquetaIdsFiltro
+            .where(idsVigentes.contains)
+            .toSet();
+      });
+    }
     await _cargar();
   }
 

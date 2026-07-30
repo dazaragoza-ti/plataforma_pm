@@ -6,12 +6,21 @@ import '../../../domain/entities/tarea_etiqueta.dart';
 import '../common/avatar_stack.dart';
 import '../csv_export/csv_utils.dart';
 import '../csv_export/descargar_csv.dart';
+import '../dialogs/confirmar_eliminar_dialog.dart';
 
 /// Vista de "Lista": todas las tareas visibles en una tabla ordenable por
 /// columna — útil para escanear o comparar muchas tarjetas a la vez, algo
 /// que el tablero (una columna a la vista por estatus) no permite bien.
 class KanbanListaView extends StatefulWidget {
   final List<Tarea> tareas;
+
+  /// Total real de tarjetas por columna, sin los filtros de vista del
+  /// dashboard — llave ausente o mapa vacío cae a contar sobre [tareas].
+  /// El aviso de límite de WIP en "Mover a…" lo usa en vez de contar
+  /// sobre [tareas] directamente: si no, con un filtro activo que oculte
+  /// tarjetas de la columna destino, el aviso mostraría espacio libre que
+  /// en realidad no existe (el bloqueo real sí valida contra el total).
+  final Map<TareaEstatus, int> totalesPorEstatus;
   final List<KanbanColumna> columnas;
   final Map<int, Miembro> miembrosPorId;
   final Map<int, TareaEtiqueta> etiquetasPorId;
@@ -24,6 +33,7 @@ class KanbanListaView extends StatefulWidget {
   const KanbanListaView({
     super.key,
     required this.tareas,
+    this.totalesPorEstatus = const {},
     required this.columnas,
     required this.miembrosPorId,
     required this.etiquetasPorId,
@@ -44,17 +54,19 @@ class _KanbanListaViewState extends State<KanbanListaView> {
   static const _kUmbralMovil = 600.0;
 
   /// (etiqueta, índice de columna) para el control de orden en móvil —
-  /// mismos índices que `onSort` de la tabla, para compartir `_comparar`.
+  /// mismos índices que `onSort` de la tabla (posición FÍSICA de cada
+  /// `DataColumn`, incluidas "Etiquetas" y "Asignados" que no tienen
+  /// `onSort` pero sí ocupan un índice), para compartir `_comparar`.
   static const _opcionesOrden = [
     ('Estado', 0),
     ('Tarea', 1),
-    ('Prioridad', 2),
-    ('Área', 3),
-    ('Vencimiento', 5),
-    ('Progreso', 6),
+    ('Prioridad', 3),
+    ('Área', 4),
+    ('Vencimiento', 6),
+    ('Progreso', 7),
   ];
 
-  int _columnaOrden = 5;
+  int _columnaOrden = 6;
   bool _ascendente = true;
   final Set<int> _seleccionados = {};
   final _hScrollCtrl = ScrollController();
@@ -74,18 +86,18 @@ class _KanbanListaViewState extends State<KanbanListaView> {
         return _indiceColumna(a.estatus).compareTo(_indiceColumna(b.estatus));
       case 1:
         return a.titulo.toLowerCase().compareTo(b.titulo.toLowerCase());
-      case 2:
-        return a.prioridad.index.compareTo(b.prioridad.index);
       case 3:
+        return a.prioridad.index.compareTo(b.prioridad.index);
+      case 4:
         return a.grupo.toLowerCase().compareTo(b.grupo.toLowerCase());
-      case 5:
+      case 6:
         final fa = a.fechaVencimiento;
         final fb = b.fechaVencimiento;
         if (fa == null && fb == null) return 0;
         if (fa == null) return 1;
         if (fb == null) return -1;
         return fa.compareTo(fb);
-      case 6:
+      case 7:
         return a.progreso.compareTo(b.progreso);
       default:
         return 0;
@@ -104,9 +116,6 @@ class _KanbanListaViewState extends State<KanbanListaView> {
       _ascendente = ascendente;
     });
   }
-
-  String _fecha(DateTime d) =>
-      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
   @override
   void didUpdateWidget(KanbanListaView oldWidget) {
@@ -132,7 +141,7 @@ class _KanbanListaViewState extends State<KanbanListaView> {
 
   Future<void> _eliminar() async {
     final ids = _seleccionados.toList();
-    if (!await _confirmarEliminar(ids.length)) return;
+    if (!await _confirmarEliminarLote(ids.length)) return;
     setState(() => _seleccionados.clear());
     await widget.onEliminarSeleccion(ids);
   }
@@ -141,42 +150,20 @@ class _KanbanListaViewState extends State<KanbanListaView> {
   /// por fila — eliminar es destructivo e irreversible, así que ambos
   /// caminos deben pasar por el mismo diálogo en vez de que la acción
   /// rápida se salte la confirmación "porque es una sola tarjeta".
-  Future<bool> _confirmarEliminar(int cantidad) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: KanbanColors.bg2,
-        surfaceTintColor: Colors.transparent,
-        title: Text(
-          cantidad == 1 ? 'Eliminar tarjeta' : 'Eliminar tarjetas',
-          style: TextStyle(color: KanbanColors.texto),
-        ),
-        content: Text(
-          '¿Eliminar $cantidad ${cantidad == 1 ? 'tarjeta' : 'tarjetas'}? '
-          'Esta acción no se puede deshacer.',
-          style: TextStyle(color: KanbanColors.texto),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: KanbanColors.danger,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
-    );
-    return ok == true;
-  }
+  Future<bool> _confirmarEliminarLote(int cantidad) => confirmarEliminar(
+    context,
+    titulo: cantidad == 1 ? 'Eliminar tarjeta' : 'Eliminar tarjetas',
+    // No "esta acción no se puede deshacer": el toast que sigue si se
+    // confirma sí ofrece "Deshacer" (recreando con ids nuevos, sin
+    // restaurar dependencias) — decir lo contrario aquí lo contradice.
+    mensaje:
+        '¿Eliminar $cantidad ${cantidad == 1 ? 'tarjeta' : 'tarjetas'}? '
+        'Podrás deshacerlo enseguida, pero se perderán sus enlaces de '
+        'dependencia con otras tarjetas.',
+  );
 
   Future<void> _eliminarUna(Tarea t) async {
-    if (!await _confirmarEliminar(1)) return;
+    if (!await _confirmarEliminarLote(1)) return;
     await widget.onEliminarSeleccion([t.id]);
   }
 
@@ -211,22 +198,25 @@ class _KanbanListaViewState extends State<KanbanListaView> {
           t.prioridad.etiqueta,
           t.grupo,
           asignados,
-          t.fechaVencimiento == null ? '' : _fecha(t.fechaVencimiento!),
+          kanbanFecha(t.fechaVencimiento),
           '${(t.progreso * 100).round()}%',
         ].map(campoCsv).join(','),
       );
     }
     try {
       descargarCsv('tareas_kanban.csv', lineas.join('\r\n'));
-    } catch (_) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text(
-            'Exportar a CSV solo está disponible en la versión web.',
-          ),
-          backgroundColor: KanbanColors.danger,
-        ),
+    } on UnsupportedError {
+      kanbanToast(
+        context,
+        'Exportar a CSV solo está disponible en la versión web.',
+        ok: false,
       );
+    } catch (_) {
+      // En web, cualquier otro fallo (bloqueo de pop-up, política de
+      // seguridad al crear el Blob/URL, etc.) no es "no disponible" —
+      // el mensaje de arriba sería falso y confundiría a quien sí está
+      // en la versión que debería soportarlo.
+      kanbanToast(context, 'No se pudo exportar el CSV. Intenta de nuevo.', ok: false);
     }
   }
 
@@ -312,7 +302,7 @@ class _KanbanListaViewState extends State<KanbanListaView> {
                   c.limiteWip == null
                       ? c.titulo
                       : '${c.titulo} '
-                            '(${widget.tareas.where((t) => t.estatus == c.estatus).length}'
+                            '(${widget.totalesPorEstatus[c.estatus] ?? widget.tareas.where((t) => t.estatus == c.estatus).length}'
                             '/${c.limiteWip})',
                   style: const TextStyle(fontSize: 12.5),
                 ),
@@ -612,9 +602,7 @@ class _KanbanListaViewState extends State<KanbanListaView> {
               : Padding(
                   padding: const EdgeInsets.all(16),
                   child: Container(
-                    decoration: KanbanColors.cardDecorationConFondo(
-                      radius: 12,
-                    ),
+                    decoration: KanbanColors.cardDecorationConFondo(radius: 12),
                     clipBehavior: Clip.antiAlias,
                     // `LayoutBuilder` + `ConstrainedBox(minWidth: ...)`: sin esto,
                     // la tabla (más angosta que la pantalla) queda pegada a la
@@ -984,7 +972,7 @@ class _KanbanListaViewState extends State<KanbanListaView> {
       );
     }
     return Text(
-      _fecha(t.fechaVencimiento!),
+      kanbanFecha(t.fechaVencimiento),
       style: TextStyle(
         fontSize: 12,
         fontWeight: t.vencida ? FontWeight.w700 : FontWeight.normal,
