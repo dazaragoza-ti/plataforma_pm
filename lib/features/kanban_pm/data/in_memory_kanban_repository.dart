@@ -924,6 +924,8 @@ class InMemoryKanbanRepository implements KanbanRepository {
   @override
   Future<void> eliminarTarea(int tareaId) async {
     await _latencia();
+    final idx = _tareas.indexWhere((t) => t.id == tareaId);
+    final estatus = idx == -1 ? null : _tareas[idx].estatus;
     _tareas.removeWhere((t) => t.id == tareaId);
     for (var i = 0; i < _tareas.length; i++) {
       if (_tareas[i].dependeDeIds.contains(tareaId)) {
@@ -934,6 +936,15 @@ class InMemoryKanbanRepository implements KanbanRepository {
         );
       }
     }
+    // Sin esto, `crearTarea` (que asigna `orden` como un CONTEO de
+    // tarjetas en la columna, no "máximo orden + 1") podía repartir a la
+    // nueva tarjeta el mismo `orden` que una tarjeta sobreviviente: borrar
+    // la tarjeta con `orden = 1` de una columna con 3 (0,1,2) deja 0 y 2
+    // sin renumerar; una tarjeta nueva ahí recibe `orden = 2` (el conteo
+    // pasó a ser 2), duplicado con la que ya tenía `orden = 2`. El `sort`
+    // (inestable) de `listarTareas` podía entonces alternar cuál de las
+    // dos aparece primero entre una carga y otra.
+    if (estatus != null) _renumerarColumna(estatus);
   }
 
   @override
@@ -1021,6 +1032,9 @@ class InMemoryKanbanRepository implements KanbanRepository {
     final cambios = <String>[];
     if (anterior.titulo != nueva.titulo) {
       cambios.add('renombró la tarjeta a "${nueva.titulo}"');
+    }
+    if (anterior.fechaInicio != nueva.fechaInicio) {
+      cambios.add('cambió la fecha de inicio');
     }
     if (anterior.fechaVencimiento != nueva.fechaVencimiento) {
       cambios.add('cambió la fecha de vencimiento');
@@ -1550,8 +1564,17 @@ class InMemoryKanbanRepository implements KanbanRepository {
   }
 
   @override
-  Future<void> eliminarMiembro(int miembroId) async {
+  Future<bool> eliminarMiembro(int miembroId) async {
     await _latencia();
+    // El guard vive aquí (no solo en el diálogo que lo invoca): sin esto,
+    // dos "quitar" casi simultáneos sobre 2 personas distintas —cada uno
+    // evaluando "¿quedaría alguien?" contra el estado de ANTES de que el
+    // otro terminara— podían dejar el área sin nadie con `usuarioId`
+    // ligado al directorio global, es decir, inaccesible para siempre.
+    final quedariaAlguienConAcceso = _miembros.any(
+      (m) => m.id != miembroId && m.usuarioId != null,
+    );
+    if (!quedariaAlguienConAcceso) return false;
     _miembros.removeWhere((m) => m.id == miembroId);
     for (var i = 0; i < _tareas.length; i++) {
       if (_tareas[i].miembroIds.contains(miembroId)) {
@@ -1581,6 +1604,7 @@ class InMemoryKanbanRepository implements KanbanRepository {
         );
       }
     }
+    return true;
   }
 
   List<Actividad> _sinResponsableEnArbol(List<Actividad> lista, int miembroId) {

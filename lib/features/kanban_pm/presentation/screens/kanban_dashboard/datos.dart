@@ -290,7 +290,15 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
         );
       }
     });
-    await _repo.actualizarLimiteWipColumna(estatus, limite);
+    try {
+      await _repo.actualizarLimiteWipColumna(estatus, limite);
+    } catch (ex) {
+      _toast('Error al cambiar el límite WIP: $ex', ok: false);
+      // Mismo criterio que `_reordenarColumnaDrag`/`_renombrarColumna`:
+      // revertir el optimista recargando el catálogo real en vez de
+      // dejar un límite que nunca se guardó.
+      await _cargarColumnasYEtiquetas();
+    }
   }
 
   Future<void> _abrirNuevaTarea() async {

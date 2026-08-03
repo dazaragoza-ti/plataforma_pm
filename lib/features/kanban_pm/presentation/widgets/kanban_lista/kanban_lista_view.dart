@@ -142,6 +142,7 @@ class _KanbanListaViewState extends State<KanbanListaView> {
   Future<void> _eliminar() async {
     final ids = _seleccionados.toList();
     if (!await _confirmarEliminarLote(ids.length)) return;
+    if (!mounted) return;
     setState(() => _seleccionados.clear());
     await widget.onEliminarSeleccion(ids);
   }

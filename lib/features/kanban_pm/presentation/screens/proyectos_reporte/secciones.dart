@@ -129,7 +129,11 @@ mixin _ProyectosSeccionesMixin {
             runSpacing: 10,
             children: [
               _kpi(
-                'Días tarde',
+                // `datos.diasTarde` cuenta tareas vencidas (`Tarea.vencida`
+                // es un booleano, "¿está vencida?"), no días de retraso —
+                // la etiqueta anterior ("Días tarde") prometía una unidad
+                // que este número nunca representó.
+                'Tareas vencidas',
                 '${datos.diasTarde}',
                 acento: datos.diasTarde > 0
                     ? const Color(0xFFFF6B60)
@@ -333,7 +337,7 @@ mixin _ProyectosSeccionesMixin {
                           'tareas\nimpactadas',
                         ),
                         const SizedBox(width: 22),
-                        _taponNumero('${datos.diasTarde}', 'días\ntarde'),
+                        _taponNumero('${datos.diasTarde}', 'tareas\nvencidas'),
                       ],
                     ),
                   ],

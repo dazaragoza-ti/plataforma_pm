@@ -123,7 +123,17 @@ abstract class KanbanRepository {
 
   Future<void> actualizarMiembro(Miembro miembro);
 
-  Future<void> eliminarMiembro(int miembroId);
+  /// Devuelve `false` (sin quitar a nadie) si [miembroId] es la última
+  /// persona del área con [Miembro.usuarioId] ligado al directorio
+  /// global — quitarla dejaría el área inaccesible para siempre (ni
+  /// `WorkspaceRepository.listarWorkspacesDe` volvería a mostrársela a
+  /// nadie). El guard vive aquí (no solo en el diálogo que la invoca)
+  /// para que dos quitados casi simultáneos no puedan saltárselo: el
+  /// diálogo evalúa "¿quedaría alguien?" antes de confirmar, pero esa
+  /// evaluación no se revalida justo antes de escribir, así que dos
+  /// llamadas que pasan el chequeo casi al mismo tiempo podían dejar el
+  /// área sin nadie con acceso.
+  Future<bool> eliminarMiembro(int miembroId);
 
   // Plantillas (templates) editables para crear tarjetas rápido.
   Future<List<TareaPlantilla>> listarPlantillas();

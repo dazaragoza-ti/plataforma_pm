@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../kanban_constants.dart';
 import '../../../data/kanban_repository.dart';
+import '../../../data/usuario_directorio.dart';
 import '../../../domain/entities/miembro.dart';
 import '../../../domain/entities/tarea_etiqueta.dart';
 import '../../../domain/entities/tarea_plantilla.dart';
@@ -36,6 +37,11 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
   List<Miembro> _miembros = [];
   bool _cargando = true;
 
+  /// Ids de plantilla con una creación/edición/eliminación en curso —
+  /// mismo criterio que `EtiquetasDialog`. `-1` representa "creando una
+  /// nueva" (no tiene id todavía).
+  final Set<int> _procesando = {};
+
   @override
   void initState() {
     super.initState();
@@ -68,6 +74,8 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
   }
 
   Future<void> _crearOEditar({TareaPlantilla? existente}) async {
+    final clave = existente?.id ?? -1;
+    if (_procesando.contains(clave)) return;
     final resultado = await _PlantillaFormDialog.show(
       context,
       existente: existente,
@@ -75,6 +83,8 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
       miembros: _miembros,
     );
     if (resultado == null) return;
+    if (!mounted) return;
+    setState(() => _procesando.add(clave));
     try {
       if (existente == null) {
         await widget.repository.crearPlantilla(resultado);
@@ -84,16 +94,21 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
       await _cargar();
     } catch (ex) {
       _error(ex);
+    } finally {
+      if (mounted) setState(() => _procesando.remove(clave));
     }
   }
 
   Future<void> _eliminar(TareaPlantilla p) async {
+    if (_procesando.contains(p.id)) return;
     final ok = await confirmarEliminar(
       context,
       titulo: 'Eliminar plantilla',
       mensaje: '¿Eliminar la plantilla "${p.nombre}"?',
     );
     if (!ok) return;
+    if (!mounted) return;
+    setState(() => _procesando.add(p.id));
     try {
       await widget.repository.eliminarPlantilla(p.id);
       await _cargar();
@@ -106,6 +121,8 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
       });
     } catch (ex) {
       _error(ex);
+    } finally {
+      if (mounted) setState(() => _procesando.remove(p.id));
     }
   }
 
@@ -190,7 +207,9 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
               child: SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: () => _crearOEditar(),
+                  onPressed: _procesando.contains(-1)
+                      ? null
+                      : () => _crearOEditar(),
                   icon: const Icon(Icons.add_rounded, size: 17),
                   label: const Text('Nueva plantilla'),
                   style: OutlinedButton.styleFrom(
@@ -210,6 +229,7 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
   }
 
   Widget _tile(TareaPlantilla p) {
+    final ocupada = _procesando.contains(p.id);
     final etiquetasPlantilla = p.etiquetaIds
         .map((id) => _etiquetas.where((e) => e.id == id))
         .where((it) => it.isNotEmpty)
@@ -289,7 +309,7 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
           IconButton(
             tooltip: 'Editar plantilla',
             icon: Icon(Icons.edit_outlined, size: 18, color: KanbanColors.tdim),
-            onPressed: () => _crearOEditar(existente: p),
+            onPressed: ocupada ? null : () => _crearOEditar(existente: p),
           ),
           IconButton(
             tooltip: 'Eliminar plantilla',
@@ -298,7 +318,7 @@ class _PlantillasDialogState extends State<PlantillasDialog> {
               size: 18,
               color: KanbanColors.tdim,
             ),
-            onPressed: () => _eliminar(p),
+            onPressed: ocupada ? null : () => _eliminar(p),
           ),
           const SizedBox(width: 4),
           ElevatedButton(
@@ -376,6 +396,17 @@ class _PlantillaFormDialogState extends State<_PlantillaFormDialog> {
     ...?widget.existente?.miembroIds,
   };
   Color? _portada;
+
+  /// Oculta la etiqueta del comité a quien no pertenece — mismo criterio
+  /// que `EtiquetasDialog`/`TareaDetailDialog`. Sin este filtro, cualquier
+  /// persona podía marcar "Comité" en una plantilla y, al usarla desde
+  /// `NuevaTareaDialog`, esa etiqueta llegaba a la tarjeta nueva sin que
+  /// nadie del comité la haya puesto ahí a propósito.
+  List<TareaEtiqueta> get _etiquetasVisibles => usuarioActual.value.perteneceComite
+      ? widget.etiquetas
+      : widget.etiquetas
+            .where((e) => e.nombre != kNombreEtiquetaComite)
+            .toList();
 
   @override
   void initState() {
@@ -526,7 +557,7 @@ class _PlantillaFormDialogState extends State<_PlantillaFormDialog> {
                 ),
                 const SizedBox(height: 14),
                 _seccionLabel('Etiquetas sugeridas'),
-                if (widget.etiquetas.isEmpty)
+                if (_etiquetasVisibles.isEmpty)
                   Text(
                     'Aún no hay etiquetas en el tablero.',
                     style: TextStyle(fontSize: 12, color: KanbanColors.tdim),
@@ -536,7 +567,7 @@ class _PlantillaFormDialogState extends State<_PlantillaFormDialog> {
                     spacing: 6,
                     runSpacing: 6,
                     children: [
-                      for (final et in widget.etiquetas)
+                      for (final et in _etiquetasVisibles)
                         FilterChip(
                           label: Text(
                             et.nombre,

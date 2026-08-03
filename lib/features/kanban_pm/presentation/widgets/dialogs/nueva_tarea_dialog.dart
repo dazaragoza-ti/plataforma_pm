@@ -105,6 +105,16 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
 
   Future<void> _crear() async {
     if (_tituloCtrl.text.trim().isEmpty) return;
+    // `_guardando = true` ANTES del chequeo de WIP (que es async), no
+    // después: sin esto, el botón "Crear tarea" seguía habilitado
+    // mientras `listarTareas()` estaba en curso, así que un doble-tap
+    // rápido disparaba dos llamadas a `_crear()` que leían el mismo
+    // conteo de "ocupadas" (ninguna había creado su tarjeta todavía),
+    // ambas pasaban el chequeo de límite, y ambas terminaban creando una
+    // tarjeta — exactamente el caso que este chequeo dice cerrar.
+    if (!mounted) return;
+    setState(() => _guardando = true);
+
     // Sin este chequeo, crear una tarjeta nueva directo en una columna con
     // límite de WIP (p. ej. Proceso, límite 1) era la única de las 4 formas
     // de llegar a esa columna que no respetaba el límite — arrastrar,
@@ -124,6 +134,7 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
           .length;
       if (ocupadas >= limite) {
         if (mounted) {
+          setState(() => _guardando = false);
           kanbanToast(
             context,
             'Ya hay ${ocupadas == 1 ? 'una tarjeta' : '$ocupadas tarjetas'} '
@@ -135,8 +146,6 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
         return;
       }
     }
-    if (!mounted) return;
-    setState(() => _guardando = true);
     try {
       final id = await widget.repository.crearTarea(
         Tarea(
@@ -149,10 +158,18 @@ class _NuevaTareaDialogState extends State<NuevaTareaDialog> {
           asignadoPor: usuarioActual.value.nombre,
           miembroIds: _miembroIdsSeleccionados.toList(),
           // Filtrado contra `widget.etiquetas` por el mismo motivo que
-          // `_miembroIdsSeleccionados` arriba.
+          // `_miembroIdsSeleccionados` arriba. También excluye "Comité" si
+          // quien crea la tarea no pertenece a él: una plantilla marcada
+          // con esa etiqueta no debe poder colársela a alguien ajeno solo
+          // por usarla.
           etiquetaIds: (widget.plantilla?.etiquetaIds ?? const [])
               .where(
-                (id) => widget.etiquetas.any((e) => e.id == id),
+                (id) => widget.etiquetas.any(
+                  (e) =>
+                      e.id == id &&
+                      (usuarioActual.value.perteneceComite ||
+                          e.nombre != kNombreEtiquetaComite),
+                ),
               )
               .toList(),
           portada: widget.plantilla?.portada,

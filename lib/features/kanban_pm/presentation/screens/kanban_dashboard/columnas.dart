@@ -14,7 +14,15 @@ mixin _KanbanDashboardColumnasMixin on _KanbanDashboardDatosMixin {
         _columnas[idx] = _columnas[idx].copyWith(titulo: nuevoTitulo);
       }
     });
-    await _repo.renombrarColumna(estatus, nuevoTitulo);
+    try {
+      await _repo.renombrarColumna(estatus, nuevoTitulo);
+    } catch (ex) {
+      _toast('Error al renombrar la lista: $ex', ok: false);
+      // Mismo criterio que `_reordenarColumnaDrag`: revertir el optimista
+      // recargando el catálogo real en vez de dejar un título que nunca
+      // se guardó.
+      await _cargarColumnasYEtiquetas();
+    }
   }
 
   Future<void> _archivarColumna(TareaEstatus estatus, bool archivada) async {

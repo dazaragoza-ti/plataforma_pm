@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart'
     show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 
+import '../../data/kanban_repository.dart';
 import '../../data/usuario_directorio.dart';
 import '../../data/workspace_repository.dart';
 import '../../domain/entities/usuario.dart';
@@ -47,6 +48,12 @@ class _WorkspaceSelectorScreenState extends State<WorkspaceSelectorScreen> {
   List<Workspace> _workspaces = [];
   bool _cargando = true;
 
+  /// Evita crear dos áreas o empujar dos `KanbanDashboardScreen` si se
+  /// toca "Nueva área"/una tarjeta dos veces rápido antes de que el
+  /// primer toque reaccione — mismo criterio que los demás diálogos
+  /// mutantes del módulo.
+  bool _navegando = false;
+
   @override
   void initState() {
     super.initState();
@@ -85,9 +92,18 @@ class _WorkspaceSelectorScreenState extends State<WorkspaceSelectorScreen> {
   }
 
   Future<void> _crear() async {
-    final creada = await NuevaWorkspaceDialog.show(context, repository: _repo);
-    if (creada == null) return;
-    await _cargar();
+    if (_navegando) return;
+    setState(() => _navegando = true);
+    try {
+      final creada = await NuevaWorkspaceDialog.show(
+        context,
+        repository: _repo,
+      );
+      if (creada == null) return;
+      await _cargar();
+    } finally {
+      if (mounted) setState(() => _navegando = false);
+    }
   }
 
   Future<void> _renombrar(Workspace w) async {
@@ -191,15 +207,38 @@ class _WorkspaceSelectorScreenState extends State<WorkspaceSelectorScreen> {
   }
 
   Future<void> _gestionarMiembros(Workspace w) async {
+    // `kanbanRepositoryPara` lanza `StateError` si [w] ya no existe — puede
+    // pasar si esta tarjeta sigue en pantalla (el `await _latencia()` de
+    // `_cargar()` no ha resuelto todavía) justo cuando otra acción acaba
+    // de eliminarla. Sin este try/catch, ese `StateError` se propagaba sin
+    // capturar y tumbaba la pantalla en vez de solo avisar y refrescar.
+    final repo = _intentarObtenerRepo(w);
+    if (repo == null) return;
     await WorkspaceMiembrosDialog.show(
       context,
-      repository: _repo.kanbanRepositoryPara(w.id),
+      repository: repo,
       tituloWorkspace: w.nombre,
     );
     // Si se quitó a la persona activa (`usuarioActual`) de esta área, ya
     // no debe aparecer en su selector — sin este refresco, la tarjeta
     // seguía visible/"entrable" hasta que algo más disparara `_cargar()`.
     await _cargar();
+  }
+
+  /// `null` (y ya avisó + refrescó la lista) si [w] ya no existe en
+  /// [_repo] — ver el comentario de `_gestionarMiembros`.
+  KanbanRepository? _intentarObtenerRepo(Workspace w) {
+    try {
+      return _repo.kanbanRepositoryPara(w.id);
+    } catch (_) {
+      kanbanToast(
+        context,
+        'Esta área ya no existe. Actualizando la lista...',
+        ok: false,
+      );
+      _cargar();
+      return null;
+    }
   }
 
   Future<void> _eliminar(Workspace w) async {
@@ -216,24 +255,32 @@ class _WorkspaceSelectorScreenState extends State<WorkspaceSelectorScreen> {
   }
 
   Future<void> _entrar(Workspace w) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => KanbanDashboardScreen(
-          repository: _repo.kanbanRepositoryPara(w.id),
-          workspaceNombre: w.nombre,
-          workspaceColor: w.color,
-          workspaceRepository: _repo,
+    if (_navegando) return;
+    final repo = _intentarObtenerRepo(w);
+    if (repo == null) return;
+    setState(() => _navegando = true);
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => KanbanDashboardScreen(
+            repository: repo,
+            workspaceNombre: w.nombre,
+            workspaceColor: w.color,
+            workspaceRepository: _repo,
+          ),
         ),
-      ),
-    );
-    // `KanbanColors.oscuro` es estado global mutable (no un
-    // `InheritedWidget`/provider), así que esta pantalla no se entera sola
-    // si cambió mientras se estaba en el tablero. Este `setState` vacío no
-    // es código muerto: no cambia ningún campo propio, solo fuerza un
-    // rebuild para que `build()` vuelva a leer `KanbanColors.bg`/`.texto`/
-    // etc. con la paleta ya actualizada — sin él, este selector se quedaba
-    // pintado con los colores con los que se montó la primera vez.
-    if (mounted) setState(() {});
+      );
+    } finally {
+      if (mounted) setState(() => _navegando = false);
+    }
+    // Recarga real (no solo un repintado): sin esto, la tarjeta seguía
+    // mostrando el conteo de tareas con el que se entró aunque dentro del
+    // tablero se hayan creado/cerrado tarjetas — `_cargar()` también cubre
+    // el caso original de este `setState` vacío (`KanbanColors.oscuro` es
+    // estado global mutable que esta pantalla no se entera sola si cambió
+    // mientras se estaba en el tablero), ya que reconstruye con los
+    // colores vigentes de todos modos.
+    await _cargar();
   }
 
   @override

@@ -542,6 +542,21 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
   }
 
   Future<void> _iniciar() async {
+    // Reusa `_guardando` (no un flag nuevo): bloquea el mismo botón contra
+    // doble-tap Y el cierre del diálogo mientras esta operación async
+    // sigue en curso — sin esto, un doble-tap rápido con la tarjeta en
+    // "Proceso" disparaba dos veces `PausarTareaDialog.show(...)`
+    // apilados, registrando dos entradas de historial "Pausó: ..." para
+    // una sola acción.
+    setState(() => _guardando = true);
+    try {
+      await _iniciarInterno();
+    } finally {
+      if (mounted) setState(() => _guardando = false);
+    }
+  }
+
+  Future<void> _iniciarInterno() async {
     final t = _tarea!;
     final TareaEstatus nuevo;
     switch (t.estatus) {
@@ -649,6 +664,13 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
   }
 
   Future<void> _guardar() async {
+    // Sin esta validación (que `NuevaTareaDialog._crear()` sí hace), se
+    // podía guardar el título en blanco con solo borrar el campo y tocar
+    // GUARDAR, dejando una tarjeta sin título visible en el tablero.
+    if (_tituloCtrl.text.trim().isEmpty) {
+      kanbanToast(context, 'El título no puede quedar vacío.', ok: false);
+      return;
+    }
     setState(() => _guardando = true);
     try {
       final movidas = await widget.repository.actualizarTarea(
@@ -757,9 +779,36 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
           : '¿Eliminar "${actividad.descripcion}"?',
     );
     if (!ok) return;
-    await widget.repository.eliminarActividad(widget.tareaId, actividadId);
-    widget.onRefresh();
-    await _cargar();
+    // Igual que `_eliminarTarea`: bloquea el botón (vía `_guardando`,
+    // compartido por todo el diálogo) recién después de confirmar, para
+    // que un doble-tap posterior no apile un segundo `confirmarEliminar`
+    // sobre una subtarea que la primera confirmación ya va a borrar.
+    if (!mounted) return;
+    setState(() => _guardando = true);
+    try {
+      await widget.repository.eliminarActividad(widget.tareaId, actividadId);
+      widget.onRefresh();
+      await _cargar();
+      if (mounted) setState(() => _guardando = false);
+    } catch (ex) {
+      // Mismo criterio que `_guardar()`: el detalle técnico a la consola,
+      // un aviso genérico a quien usa la app — sin este catch, un
+      // doble-tap que dispara dos `confirmarEliminar` apilados sobre la
+      // misma subtarea dejaba la segunda excepción (id ya eliminado) sin
+      // capturar y sin ningún aviso.
+      debugPrint('Error al eliminar subtarea: $ex');
+      if (mounted) {
+        setState(() => _guardando = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'No se pudo eliminar la subtarea. Intenta de nuevo.',
+            ),
+            backgroundColor: KanbanColors.danger,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _asignarResponsable(
@@ -801,10 +850,36 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
       mensaje:
           '¿Eliminar "${_tarea!.titulo}"? Esta acción no se puede deshacer.',
     );
-    if (ok) {
+    if (!ok) return;
+    // Recién aquí (no antes de `confirmarEliminar`): así el botón sigue
+    // tocable mientras el diálogo de confirmación está abierto (para
+    // poder cancelarlo), pero un doble-tap DESPUÉS de confirmar —que
+    // apilaría un segundo `confirmarEliminar` sobre una tarea que la
+    // primera confirmación ya va a borrar— queda bloqueado.
+    if (!mounted) return;
+    setState(() => _guardando = true);
+    try {
       await widget.repository.eliminarTarea(widget.tareaId);
       widget.onRefresh();
       if (mounted) Navigator.of(context).pop();
+    } catch (ex) {
+      // Un doble-tap en el ícono de basura puede apilar dos
+      // `confirmarEliminar`; al confirmar el segundo, la tarea ya no
+      // existe y `eliminarTarea` puede lanzar — sin este catch, esa
+      // excepción quedaba sin capturar y sin ningún aviso (a diferencia
+      // de `_guardar()`, que sí atrapa sus errores).
+      debugPrint('Error al eliminar tarea: $ex');
+      if (mounted) {
+        setState(() => _guardando = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'No se pudo eliminar la tarea. Intenta de nuevo.',
+            ),
+            backgroundColor: KanbanColors.danger,
+          ),
+        );
+      }
     }
   }
 
@@ -1253,7 +1328,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                   size: 15,
                   color: KanbanColors.tdim,
                 ),
-                onPressed: () => _eliminarActividad(a.id),
+                onPressed: _guardando ? null : () => _eliminarActividad(a.id),
               ),
             ],
           ),
@@ -1353,7 +1428,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                             color: KanbanColors.tdim,
                             size: 19,
                           ),
-                          onPressed: _eliminarTarea,
+                          onPressed: _guardando ? null : _eliminarTarea,
                         ),
                         IconButton(
                           icon: Icon(
@@ -1380,7 +1455,7 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           OutlinedButton.icon(
-                            onPressed: _iniciar,
+                            onPressed: _guardando ? null : _iniciar,
                             icon: Icon(
                               Icons.play_circle_outline_rounded,
                               size: 16,

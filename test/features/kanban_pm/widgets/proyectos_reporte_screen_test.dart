@@ -37,6 +37,7 @@ Future<WorkspaceRepository> _repoConDatosComite() async {
     javier.colorAvatar,
     usuarioId: javier.id,
   );
+  final miembroId2 = await repo.crearMiembro('Otro Responsable', Colors.teal);
 
   final baseId = await repo.crearTarea(
     Tarea(
@@ -71,6 +72,18 @@ Future<WorkspaceRepository> _repoConDatosComite() async {
       miembroIds: [miembroId],
       dependeDeIds: [baseId],
       fechaVencimiento: DateTime(2026, 1, 20),
+    ),
+  );
+  // Asignación múltiple (`miembroIds` con 2 personas) — debe aparecer en
+  // la lista de pendientes de AMBAS, no solo de la primera.
+  await repo.crearTarea(
+    Tarea(
+      id: 0,
+      titulo: 'Tarea co-asignada',
+      estatus: TareaEstatus.tareas,
+      etiquetaIds: [etiquetaComiteId],
+      miembroIds: [miembroId, miembroId2],
+      fechaVencimiento: DateTime(2026, 1, 25),
     ),
   );
 
@@ -293,6 +306,25 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(Dialog), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'una tarea con varios responsables aparece en la lista de pendientes '
+    'de cada uno',
+    (tester) async {
+      // Regresión: "Qué debe cerrar cada quien" solo miraba
+      // `miembroIds.first` — una tarea asignada a 2 personas solo
+      // aparecía en la lista de la primera, dejando a la segunda sin
+      // enterarse de que también le toca cerrarla. El título aparece 4
+      // veces en total: el chip de su carril, la mención en "activar hoy"
+      // del tapón (es una tarea libre, se lista una sola vez ahí sin
+      // importar cuántos responsables tenga) y una fila por cada uno de
+      // sus 2 responsables en "qué debe cerrar cada quien". Antes del fix
+      // hubiera sido solo 3 (sin la segunda fila de responsable).
+      await bombear(tester, const Size(1400, 1000));
+
+      expect(find.textContaining('Tarea co-asignada'), findsNWidgets(4));
     },
   );
 

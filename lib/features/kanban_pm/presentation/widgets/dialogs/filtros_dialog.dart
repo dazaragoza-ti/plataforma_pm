@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../../data/kanban_repository.dart';
+import '../../../data/usuario_directorio.dart';
 import '../../../domain/entities/miembro.dart';
 import '../../../domain/entities/tarea_etiqueta.dart';
-import '../../../kanban_constants.dart' show KanbanColors, kanbanToast;
+import '../../../kanban_constants.dart'
+    show KanbanColors, kNombreEtiquetaComite, kanbanToast;
 import 'kanban_alert_dialog.dart';
 
 /// Selección hecha en [FiltrosDialog] — quien llama decide cómo aplicarla
@@ -46,6 +48,12 @@ class FiltrosDialog {
     var miembroIds = Set<int>.of(miembroIdsFiltro);
     var departamentos = Set<String>.of(departamentosFiltro);
     var etiquetaIds = Set<int>.of(etiquetaIdsFiltro);
+    // Igual que en `EtiquetasDialog`/`TareaDetailDialog`: quien no
+    // pertenece al comité ni siquiera ve la etiqueta como opción de
+    // filtro.
+    final etiquetasVisibles = usuarioActual.value.perteneceComite
+        ? etiquetas
+        : etiquetas.where((e) => e.nombre != kNombreEtiquetaComite).toList();
 
     // Loading inmediato: sin esto, mientras `listarTareas()` resuelve el
     // botón que abre "Filtros" parecía no responder. Se cierra apenas
@@ -263,13 +271,13 @@ class FiltrosDialog {
                           ],
                         ),
                       ],
-                      if (etiquetas.isNotEmpty) ...[
+                      if (etiquetasVisibles.isNotEmpty) ...[
                         seccion('Etiquetas'),
                         Wrap(
                           spacing: 6,
                           runSpacing: 6,
                           children: [
-                            for (final e in etiquetas)
+                            for (final e in etiquetasVisibles)
                               FilterChip(
                                 label: Text(
                                   e.nombre,

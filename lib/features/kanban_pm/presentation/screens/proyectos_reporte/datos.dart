@@ -103,8 +103,17 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
   var mejorImpactadas = 0;
   final listasParaActivar = <_RefTarea>[];
 
+  // Orden estable por nombre (no el de inserción del `Map`, que depende
+  // del orden en que `UsuarioDirectorio.instancia.listar()` y
+  // `listarWorkspacesDe` devuelven sus resultados — sin garantía de ser
+  // el mismo entre una carga y otra): sin esto, la misma área podía
+  // aparecer como "ÁREA 01" una vez y "ÁREA 03" la siguiente, confundiendo
+  // cualquier referencia previa a "el área tal número".
+  final workspacesOrdenados = workspacesPorId.values.toList()
+    ..sort((a, b) => a.nombre.toLowerCase().compareTo(b.nombre.toLowerCase()));
+
   var indice = 0;
-  for (final w in workspacesPorId.values) {
+  for (final w in workspacesOrdenados) {
     indice++;
     final repo = workspaceRepo.kanbanRepositoryPara(w.id);
     final etiquetas = await repo.listarEtiquetas();
@@ -120,17 +129,23 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
     // comité abre ESE tablero (ver `_cargarColumnasYEtiquetas` en
     // `kanban_dashboard/datos.dart`) — si todavía nadie lo abrió, esta área
     // simplemente no tiene actividades de comité que mostrar aún.
-    final tareasComite = etiquetaComite == null
+    final todasLasTareas = etiquetaComite == null
         ? <Tarea>[]
-        : (await repo.listarTareas())
-              .where(
-                (t) => !t.archivada && t.etiquetaIds.contains(etiquetaComite!.id),
-              )
-              .toList();
+        : (await repo.listarTareas()).where((t) => !t.archivada).toList();
+    final tareasComite = todasLasTareas
+        .where((t) => t.etiquetaIds.contains(etiquetaComite!.id))
+        .toList();
 
     final miembros = await repo.listarMiembros();
     final miembrosPorId = {for (final m in miembros) m.id: m};
-    final tareasPorId = {for (final t in tareasComite) t.id: t};
+    // Del universo COMPLETO de tareas del área (no solo las etiquetadas
+    // "Comité"): una tarea de comité puede depender de una tarea normal
+    // sin esa etiqueta, y sigue estando realmente bloqueada por ella
+    // mientras esa predecesora no cierre. Si este mapa solo tuviera las
+    // tareas de comité, esas dependencias eran invisibles: `bloqueada()`
+    // devolvía `false` (predecesora no encontrada) y la tarea aparecía
+    // como "libre"/lista para activar cuando en realidad seguía frenada.
+    final tareasPorId = {for (final t in todasLasTareas) t.id: t};
 
     String responsableDe(Tarea t) {
       if (t.miembroIds.isEmpty) return 'SIN ASIGNAR';
@@ -138,6 +153,24 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
       return (nombre == null || nombre.isEmpty)
           ? 'SIN ASIGNAR'
           : nombre.toUpperCase();
+    }
+
+    // A diferencia de `responsableDe` (solo el primer asignado, para el
+    // renglón compacto del chip): esta devuelve a TODOS los asignados —
+    // sin esto, una tarea con 2+ responsables (asignación múltiple, ver
+    // `Tarea.miembroIds`) solo aparecía en la lista de pendientes de la
+    // primera persona, y el resto no se enteraba de que también les toca
+    // cerrarla; lo mismo para contar cuántas personas distintas bloquea
+    // el tapón.
+    List<String> responsablesDe(Tarea t) {
+      if (t.miembroIds.isEmpty) return const ['SIN ASIGNAR'];
+      final nombres = t.miembroIds
+          .map((id) => miembrosPorId[id]?.nombre)
+          .where((n) => n != null && n.isNotEmpty)
+          .map((n) => n!.toUpperCase())
+          .toSet()
+          .toList();
+      return nombres.isEmpty ? const ['SIN ASIGNAR'] : nombres;
     }
 
     bool bloqueada(Tarea t) =>
@@ -170,14 +203,27 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
         }
       }
       if (t.fechaVencimiento != null) {
-        if (finProyecto == null || t.fechaVencimiento!.isAfter(finProyecto)) {
-          finProyecto = t.fechaVencimiento;
-        }
-        if (rangoFin == null || t.fechaVencimiento!.isAfter(rangoFin)) {
-          rangoFin = t.fechaVencimiento;
-        }
         if (cierrePlan == null || t.fechaVencimiento!.isAfter(cierrePlan)) {
           cierrePlan = t.fechaVencimiento;
+        }
+      }
+      // `finTarea`: fecha de cierre a usar para el rango REAL del proyecto
+      // (`finProyecto`/`rangoFin`). Simétrico al `t.fechaInicio ??
+      // t.fechaInicioReal` de arriba: si la tarea ya cerró de verdad,
+      // `fechaFinReal` es más fiel que la fecha planeada (pudo cerrar
+      // antes o después de lo previsto). Solo aplica cuando `t.cerrada`
+      // — `fechaFinReal` no significa nada mientras la tarea siga abierta.
+      // A propósito NO se usa para `cierrePlan`: ese campo representa el
+      // plan original tal cual, no el avance real.
+      final finTarea = t.cerrada
+          ? (t.fechaFinReal ?? t.fechaVencimiento)
+          : t.fechaVencimiento;
+      if (finTarea != null) {
+        if (finProyecto == null || finTarea.isAfter(finProyecto)) {
+          finProyecto = finTarea;
+        }
+        if (rangoFin == null || finTarea.isAfter(rangoFin)) {
+          rangoFin = finTarea;
         }
       }
 
@@ -228,28 +274,32 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
       );
 
       if (!t.cerrada) {
-        (pendientesPorResponsable[responsable] ??= []).add(
-          _PendienteReporte(
-            tareaId: 'T${t.id}',
-            nombre: t.titulo,
-            proyecto: w.nombre,
-            color: w.color,
-            // `t.fechaInicio ?? t.fechaInicioReal` (no solo `fechaInicio`):
-            // mismo fallback que ya usa el cálculo del rango global arriba
-            // — sin esto, una tarea sin fecha planeada pero que ya se
-            // movió de columna de verdad (con `fechaInicioReal` real)
-            // mostraba "Sin fecha" aunque el sistema sí sepa cuándo
-            // arrancó.
-            rango: _rangoFechas(
-              t.fechaInicio ?? t.fechaInicioReal,
-              t.fechaVencimiento,
+        // Una fila por CADA responsable asignado (no solo el primero) —
+        // ver el comentario de `responsablesDe`.
+        for (final nombreResponsable in responsablesDe(t)) {
+          (pendientesPorResponsable[nombreResponsable] ??= []).add(
+            _PendienteReporte(
+              tareaId: 'T${t.id}',
+              nombre: t.titulo,
+              proyecto: w.nombre,
+              color: w.color,
+              // `t.fechaInicio ?? t.fechaInicioReal` (no solo
+              // `fechaInicio`): mismo fallback que ya usa el cálculo del
+              // rango global arriba — sin esto, una tarea sin fecha
+              // planeada pero que ya se movió de columna de verdad (con
+              // `fechaInicioReal` real) mostraba "Sin fecha" aunque el
+              // sistema sí sepa cuándo arrancó.
+              rango: _rangoFechas(
+                t.fechaInicio ?? t.fechaInicioReal,
+                t.fechaVencimiento,
+              ),
+              estado: estado,
+              etiqueta: etiquetaFecha,
+              repo: repo,
+              tareaIdReal: t.id,
             ),
-            estado: estado,
-            etiqueta: etiquetaFecha,
-            repo: repo,
-            tareaIdReal: t.id,
-          ),
-        );
+          );
+        }
 
         // Tapón: entre las tareas que ESTA tarea (no cerrada) bloquea,
         // ¿a cuántas personas o áreas distintas afecta?
@@ -261,7 +311,13 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
           final areas = <String>{};
           final titulos = <_RefTarea>[];
           for (final imp in impactadas) {
-            personas.add(responsableDe(imp));
+            // Excluye el placeholder "SIN ASIGNAR": no es una persona real,
+            // y contarlo como una más inflaba artificialmente el "impacto"
+            // de un tapón cuyas tareas impactadas en realidad no tienen
+            // nadie asignado (o solo una persona real + el placeholder).
+            personas.addAll(
+              responsablesDe(imp).where((p) => p != 'SIN ASIGNAR'),
+            );
             if (imp.grupo.isNotEmpty) areas.add(imp.grupo);
             titulos.add(
               _RefTarea(

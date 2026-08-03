@@ -32,6 +32,14 @@ class _EtiquetasDialogState extends State<EtiquetasDialog> {
   List<TareaEtiqueta> _etiquetas = [];
   bool _cargando = true;
 
+  /// Evita crear dos etiquetas o disparar dos ediciones/eliminaciones
+  /// sobre la misma en paralelo si se toca dos veces rápido mientras el
+  /// primer `await` sigue en curso — mismo criterio que otros diálogos
+  /// del módulo (`_guardando` en `TareaDetailDialog`, `_agregando` en
+  /// `WorkspaceMiembrosDialog`).
+  bool _creando = false;
+  final Set<int> _procesando = {};
+
   /// Oculta la etiqueta del comité (ver `kNombreEtiquetaComite`) a quien no
   /// pertenece al comité — administrar ese catálogo (renombrar/recolorear/
   /// eliminar) queda reservado a quien sí pertenece, igual que aplicarla a
@@ -66,23 +74,31 @@ class _EtiquetasDialogState extends State<EtiquetasDialog> {
   }
 
   Future<void> _crear() async {
+    if (_creando) return;
     final resultado = await _EtiquetaFormDialog.show(context);
     if (resultado == null) return;
+    if (!mounted) return;
+    setState(() => _creando = true);
     try {
       await widget.repository.crearEtiqueta(resultado.$1, resultado.$2);
       await _cargar();
     } catch (ex) {
       _error(ex);
+    } finally {
+      if (mounted) setState(() => _creando = false);
     }
   }
 
   Future<void> _editar(TareaEtiqueta existente) async {
+    if (_procesando.contains(existente.id)) return;
     final resultado = await _EtiquetaFormDialog.show(
       context,
       nombreInicial: existente.nombre,
       colorInicial: existente.color,
     );
     if (resultado == null) return;
+    if (!mounted) return;
+    setState(() => _procesando.add(existente.id));
     try {
       await widget.repository.actualizarEtiqueta(
         existente.copyWith(nombre: resultado.$1, color: resultado.$2),
@@ -90,10 +106,13 @@ class _EtiquetasDialogState extends State<EtiquetasDialog> {
       await _cargar();
     } catch (ex) {
       _error(ex);
+    } finally {
+      if (mounted) setState(() => _procesando.remove(existente.id));
     }
   }
 
   Future<void> _eliminar(TareaEtiqueta e) async {
+    if (_procesando.contains(e.id)) return;
     final ok = await confirmarEliminar(
       context,
       titulo: 'Eliminar etiqueta',
@@ -102,6 +121,8 @@ class _EtiquetasDialogState extends State<EtiquetasDialog> {
           'tarjetas que la usen.',
     );
     if (!ok) return;
+    if (!mounted) return;
+    setState(() => _procesando.add(e.id));
     try {
       await widget.repository.eliminarEtiqueta(e.id);
       await _cargar();
@@ -117,6 +138,8 @@ class _EtiquetasDialogState extends State<EtiquetasDialog> {
       });
     } catch (ex) {
       _error(ex);
+    } finally {
+      if (mounted) setState(() => _procesando.remove(e.id));
     }
   }
 
@@ -200,7 +223,7 @@ class _EtiquetasDialogState extends State<EtiquetasDialog> {
               child: SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: _crear,
+                  onPressed: _creando ? null : _crear,
                   icon: const Icon(Icons.add_rounded, size: 17),
                   label: const Text('Nueva etiqueta'),
                   style: OutlinedButton.styleFrom(
@@ -220,6 +243,7 @@ class _EtiquetasDialogState extends State<EtiquetasDialog> {
   }
 
   Widget _tile(TareaEtiqueta e) {
+    final ocupada = _procesando.contains(e.id);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: KanbanColors.cardDecoration(radius: 10),
@@ -244,7 +268,7 @@ class _EtiquetasDialogState extends State<EtiquetasDialog> {
           IconButton(
             tooltip: 'Editar etiqueta',
             icon: Icon(Icons.edit_outlined, size: 18, color: KanbanColors.tdim),
-            onPressed: () => _editar(e),
+            onPressed: ocupada ? null : () => _editar(e),
           ),
           IconButton(
             tooltip: 'Eliminar etiqueta',
@@ -253,7 +277,7 @@ class _EtiquetasDialogState extends State<EtiquetasDialog> {
               size: 18,
               color: KanbanColors.tdim,
             ),
-            onPressed: () => _eliminar(e),
+            onPressed: ocupada ? null : () => _eliminar(e),
           ),
         ],
       ),

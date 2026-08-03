@@ -93,13 +93,14 @@ class _WorkspaceMiembrosDialogState extends State<WorkspaceMiembrosDialog> {
   }
 
   Future<void> _quitar(Miembro m) async {
-    // Sin este guard, quitar a la última persona con `usuarioId` (ligada
-    // al directorio global) deja el área sin nadie a quien
-    // `listarWorkspacesDe` se la muestre nunca más — ni siquiera a quien
-    // acaba de quitarla, porque este mismo diálogo solo es alcanzable
-    // desde la tarjeta del área en el selector. El área seguiría
-    // existiendo en el repositorio (con todas sus tareas), pero
-    // inaccesible para siempre.
+    // Aviso temprano, antes de molestar con el diálogo de confirmación —
+    // pero NO es la única protección: el repositorio (`eliminarMiembro`)
+    // vuelve a evaluar lo mismo justo antes de escribir. Si este chequeo
+    // fuera la única barrera, dos "quitar" casi simultáneos sobre 2
+    // personas distintas (cada uno viendo al otro como "el que se queda"
+    // en el `_miembros` de antes de que cualquiera terminara) podían
+    // dejar el área sin nadie con `usuarioId` ligado al directorio
+    // global — inaccesible para siempre.
     final quedariaAlguienConAcceso = _miembros.any(
       (x) => x.id != m.id && x.usuarioId != null,
     );
@@ -124,7 +125,16 @@ class _WorkspaceMiembrosDialogState extends State<WorkspaceMiembrosDialog> {
     );
     if (!ok) return;
     try {
-      await widget.repository.eliminarMiembro(m.id);
+      final quitado = await widget.repository.eliminarMiembro(m.id);
+      if (!quitado) {
+        if (!mounted) return;
+        kanbanToast(
+          context,
+          'No se quitó: era la última persona con acceso a esta área.',
+          ok: false,
+        );
+        return;
+      }
       await _cargar();
     } catch (ex) {
       _error(ex);
