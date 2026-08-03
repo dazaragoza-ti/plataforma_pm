@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../kanban_constants.dart';
 import '../../../data/kanban_repository.dart';
+import '../../../data/usuario_directorio.dart';
 import '../../../domain/entities/tarea_etiqueta.dart';
 import '../common/color_wheel_picker.dart';
 import 'confirmar_eliminar_dialog.dart';
@@ -30,6 +31,14 @@ class EtiquetasDialog extends StatefulWidget {
 class _EtiquetasDialogState extends State<EtiquetasDialog> {
   List<TareaEtiqueta> _etiquetas = [];
   bool _cargando = true;
+
+  /// Oculta la etiqueta del comité (ver `kNombreEtiquetaComite`) a quien no
+  /// pertenece al comité — administrar ese catálogo (renombrar/recolorear/
+  /// eliminar) queda reservado a quien sí pertenece, igual que aplicarla a
+  /// una tarjeta desde el detalle.
+  List<TareaEtiqueta> get _etiquetasVisibles => usuarioActual.value.perteneceComite
+      ? _etiquetas
+      : _etiquetas.where((e) => e.nombre != kNombreEtiquetaComite).toList();
 
   @override
   void initState() {
@@ -162,7 +171,7 @@ class _EtiquetasDialogState extends State<EtiquetasDialog> {
                       padding: EdgeInsets.all(32),
                       child: Center(child: CircularProgressIndicator()),
                     )
-                  : _etiquetas.isEmpty
+                  : _etiquetasVisibles.isEmpty
                   ? Padding(
                       padding: const EdgeInsets.all(32),
                       child: Text(
@@ -178,9 +187,9 @@ class _EtiquetasDialogState extends State<EtiquetasDialog> {
                   : ListView.separated(
                       shrinkWrap: true,
                       padding: const EdgeInsets.all(12),
-                      itemCount: _etiquetas.length,
+                      itemCount: _etiquetasVisibles.length,
                       separatorBuilder: (_, _) => const SizedBox(height: 8),
-                      itemBuilder: (context, i) => _tile(_etiquetas[i]),
+                      itemBuilder: (context, i) => _tile(_etiquetasVisibles[i]),
                     ),
             ),
             Container(

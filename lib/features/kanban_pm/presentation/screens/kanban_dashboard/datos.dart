@@ -30,8 +30,19 @@ mixin _KanbanDashboardDatosMixin on _KanbanDashboardCoreMixin {
     final futuroEtiquetas = _repo.listarEtiquetas();
     final futuroMiembros = _repo.listarMiembros();
     final columnas = await futuroColumnas;
-    final etiquetas = await futuroEtiquetas;
+    var etiquetas = await futuroEtiquetas;
     final miembros = await futuroMiembros;
+    // Provisiona sola la etiqueta del comité la primera vez que alguien
+    // del comité (ver `Usuario.perteneceComite`) abre ESTE tablero — así
+    // puede marcar tarjetas como asunto del comité sin que nadie tenga que
+    // crearla a mano de antemano en cada área de trabajo.
+    if (usuarioActual.value.perteneceComite &&
+        !etiquetas.any(
+          (e) => e.nombre.toLowerCase() == kNombreEtiquetaComite.toLowerCase(),
+        )) {
+      await _repo.crearEtiqueta(kNombreEtiquetaComite, kColorEtiquetaComite);
+      etiquetas = await _repo.listarEtiquetas();
+    }
     if (!mounted) return;
     setState(() {
       // `List.of(...)` y no la lista tal cual: `listarColumnas()` devuelve

@@ -463,6 +463,20 @@ CREATE TRIGGER trg_validar_wip_tarea
 -- 15.2 Estampado de fechas reales (fecha_inicio_real / fecha_fin_real) y
 -- limpieza de fecha_fin_real al reabrir una tarea cerrada (sin esto, el
 -- banner "Terminado el... a las..." se queda pegado tras reabrir).
+--
+-- NOTA DE DISEÑO — divergencia intencional del repositorio en memoria: hoy
+-- `InMemoryKanbanRepository` NO limpia `fechaFinReal` al reabrir (lo deja
+-- con el sello del cierre anterior) y en su lugar obliga a cada consumidor
+-- (Gantt, Gráficas) a comprobar primero `tarea.cerrada` antes de confiar en
+-- ese campo — un rodeo razonable en memoria, donde limpiar-y-reponer en
+-- cada sitio que lo usa es más código que un solo campo derivado. A nivel
+-- de base de datos SÍ conviene limpiarlo aquí: así `fecha_fin_real IS NOT
+-- NULL` significa siempre, sin excepción, "sigue cerrada Y esta es su
+-- fecha real de cierre vigente" — un único invariante que cualquier
+-- consulta puede confiar ciegamente, sin repetir el chequeo de `cerrada`
+-- en cada lugar que lo lea. El día que un backend real implemente
+-- `KanbanRepository`, el cliente Dart puede simplificarse para apoyarse en
+-- este invariante en vez de mantener su propio rodeo.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fn_estampar_fechas_reales() RETURNS TRIGGER AS $$
 DECLARE
@@ -505,9 +519,10 @@ CREATE TRIGGER trg_estampar_fechas_reales
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fn_recalcular_bloqueo_subtareas() RETURNS TRIGGER AS $$
 DECLARE
-  v_tarea_id  BIGINT;
-  v_bloqueada BOOLEAN;
-  v_tarea     tarea%ROWTYPE;
+  v_tarea_id          BIGINT;
+  v_bloqueada         BOOLEAN;
+  v_tarea             tarea%ROWTYPE;
+  v_destino_archivada BOOLEAN;
 BEGIN
   v_tarea_id := COALESCE(NEW.tarea_id, OLD.tarea_id);
 
@@ -528,17 +543,37 @@ BEGIN
   SELECT * INTO v_tarea FROM tarea WHERE id = v_tarea_id;
 
   IF v_bloqueada AND NOT v_tarea.pausada_por_subtarea AND v_tarea.estatus_id <> 'pausa' THEN
-    UPDATE tarea
-    SET estatus_antes_pausa = estatus_id,
-        estatus_id = 'pausa',
-        pausada_por_subtarea = TRUE
-    WHERE id = v_tarea_id;
+    -- No autopausar dentro de una columna archivada: la tarjeta quedaría
+    -- invisible en el tablero (ni en él ni en "tarjetas archivadas", porque
+    -- `tarea.archivada` sigue en FALSE) sin ningún aviso — se queda donde
+    -- está hasta que se desarchive "Pausa" o el bloqueo se resuelva de otra
+    -- forma. Mismo criterio que `_columnaArchivada` en el repositorio Dart
+    -- (`in_memory_kanban_repository.dart`, función `_reubicarEnColumna`).
+    SELECT archivada INTO v_destino_archivada
+    FROM kanban_columna
+    WHERE workspace_id = v_tarea.workspace_id AND estatus_id = 'pausa';
+
+    IF NOT COALESCE(v_destino_archivada, FALSE) THEN
+      UPDATE tarea
+      SET estatus_antes_pausa = estatus_id,
+          estatus_id = 'pausa',
+          pausada_por_subtarea = TRUE
+      WHERE id = v_tarea_id;
+    END IF;
   ELSIF NOT v_bloqueada AND v_tarea.pausada_por_subtarea THEN
-    UPDATE tarea
-    SET estatus_id = COALESCE(estatus_antes_pausa, 'tareas'),
-        estatus_antes_pausa = NULL,
-        pausada_por_subtarea = FALSE
-    WHERE id = v_tarea_id;
+    -- Mismo motivo que arriba: no reanudar hacia una columna archivada.
+    SELECT archivada INTO v_destino_archivada
+    FROM kanban_columna
+    WHERE workspace_id = v_tarea.workspace_id
+      AND estatus_id = COALESCE(v_tarea.estatus_antes_pausa, 'tareas');
+
+    IF NOT COALESCE(v_destino_archivada, FALSE) THEN
+      UPDATE tarea
+      SET estatus_id = COALESCE(estatus_antes_pausa, 'tareas'),
+          estatus_antes_pausa = NULL,
+          pausada_por_subtarea = FALSE
+      WHERE id = v_tarea_id;
+    END IF;
   END IF;
 
   RETURN NULL; -- trigger AFTER: no modifica la fila que lo disparó
@@ -702,6 +737,126 @@ CREATE TRIGGER trg_bloquear_catalogo_invitado
   FOR EACH ROW
   EXECUTE FUNCTION fn_bloquear_catalogo_invitado();
 
+-- ---------------------------------------------------------------------------
+-- 15.8 Ninguna tarea (crear o mover) puede terminar en una columna
+-- archivada — mismo invariante que ya reforzaba el trigger de WIP (15.1),
+-- pero independiente de si esa columna tiene límite o no. Espeja
+-- `_reubicarEnColumna`/`crearTarea` del repositorio Dart: ahí un intento de
+-- mover hacia una columna archivada se resuelve devolviendo `false` sin
+-- tocar nada (`moverTarea`), y crear ahí lanza una excepción (`crearTarea`)
+-- — aquí, al ser siempre un INSERT/UPDATE directo, ambos casos se modelan
+-- como una excepción; es responsabilidad de la capa de API traducirla al
+-- `false`/error que cada llamador de Dart espera. IMPORTANTE: por esto
+-- mismo, 15.3 (auto-pausa/reanudación) pre-chequea `archivada` ANTES de su
+-- propio UPDATE en vez de dejar que este trigger la detenga — si no, una
+-- auto-pausa hacia una columna archivada abortaría de golpe toda la
+-- transacción que la disparó (p. ej. marcar una subtarea como terminada),
+-- deshaciendo también el cambio que sí era válido.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fn_prevenir_tarea_en_columna_archivada() RETURNS TRIGGER AS $$
+DECLARE
+  v_archivada BOOLEAN;
+BEGIN
+  IF NEW.archivada THEN
+    -- Archivar la TARJETA (archivarTarea) es un camino aparte que sigue
+    -- funcionando sin importar el estado de su columna.
+    RETURN NEW;
+  END IF;
+
+  SELECT archivada INTO v_archivada
+  FROM kanban_columna
+  WHERE workspace_id = NEW.workspace_id AND estatus_id = NEW.estatus_id;
+
+  IF v_archivada THEN
+    -- SQLSTATE propio ('KB001', no el genérico check_violation que ya usa
+    -- el trigger de WIP): así `sp_mover_tarea` puede atrapar ESTE caso
+    -- puntual y devolver `false` (igual que `KanbanRepository.moverTarea`)
+    -- sin también silenciar por accidente un límite de WIP excedido, que
+    -- debe seguir siendo un error real.
+    RAISE EXCEPTION 'La columna "%" está archivada; no se puede crear ni mover una tarjeta ahí.',
+      NEW.estatus_id
+      USING ERRCODE = 'KB001';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_prevenir_tarea_en_columna_archivada
+  BEFORE INSERT OR UPDATE OF estatus_id, archivada ON tarea
+  FOR EACH ROW
+  EXECUTE FUNCTION fn_prevenir_tarea_en_columna_archivada();
+
+-- ---------------------------------------------------------------------------
+-- 15.9 No se puede archivar la última columna VISIBLE de un workspace —
+-- sin este guard, el tablero podía quedar sin ningún lugar donde soltar o
+-- crear tarjetas nuevas. Espeja el chequeo `_columnasVisibles.length <= 1`
+-- de `kanban_dashboard/columnas.dart` en Dart.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fn_prevenir_archivar_ultima_columna() RETURNS TRIGGER AS $$
+DECLARE
+  v_visibles_restantes INTEGER;
+BEGIN
+  SELECT COUNT(*) INTO v_visibles_restantes
+  FROM kanban_columna
+  WHERE workspace_id = NEW.workspace_id
+    AND NOT archivada
+    AND estatus_id <> NEW.estatus_id;
+
+  IF v_visibles_restantes = 0 THEN
+    RAISE EXCEPTION 'No puedes archivar "%": el tablero quedaría sin ninguna lista visible.',
+      NEW.estatus_id
+      USING ERRCODE = 'KB002';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_prevenir_archivar_ultima_columna
+  BEFORE UPDATE OF archivada ON kanban_columna
+  FOR EACH ROW
+  WHEN (NEW.archivada AND NOT OLD.archivada)
+  EXECUTE FUNCTION fn_prevenir_archivar_ultima_columna();
+
+-- ---------------------------------------------------------------------------
+-- 15.10 No se puede quitar a la última persona con `usuario_id` (ligada al
+-- directorio global) de un workspace — sin este guard, el área quedaba sin
+-- nadie a quien `listarWorkspacesDe` se la mostrara nunca más: ni siquiera
+-- a quien la acababa de quitar. El área seguiría existiendo (con todas sus
+-- tareas) pero inaccesible para siempre. Espeja el guard de
+-- `WorkspaceMiembrosDialog._quitar` en Dart.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fn_prevenir_quitar_ultimo_acceso() RETURNS TRIGGER AS $$
+DECLARE
+  v_quedan_con_acceso INTEGER;
+BEGIN
+  IF OLD.usuario_id IS NULL THEN
+    -- Este miembro no ligaba a nadie del directorio global; no afecta el
+    -- invariante de "alguien puede seguir entrando a esta área".
+    RETURN OLD;
+  END IF;
+
+  SELECT COUNT(*) INTO v_quedan_con_acceso
+  FROM miembro
+  WHERE workspace_id = OLD.workspace_id
+    AND usuario_id IS NOT NULL
+    AND id <> OLD.id;
+
+  IF v_quedan_con_acceso = 0 THEN
+    RAISE EXCEPTION 'No puedes quitar a la última persona con acceso a esta área de trabajo: quedaría inaccesible para siempre.'
+      USING ERRCODE = 'KB003';
+  END IF;
+
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_prevenir_quitar_ultimo_acceso
+  BEFORE DELETE ON miembro
+  FOR EACH ROW
+  EXECUTE FUNCTION fn_prevenir_quitar_ultimo_acceso();
+
 
 -- ============================================================================
 -- 16. PROCEDIMIENTOS ALMACENADOS
@@ -711,12 +866,21 @@ CREATE TRIGGER trg_bloquear_catalogo_invitado
 -- 16.1 sp_mover_tarea — equivalente a KanbanRepository.moverTarea: reordena
 -- dentro de la columna destino; los triggers de la sección 15 validan WIP,
 -- estampan fechas reales y registran historial automáticamente.
+--
+-- Devuelve BOOLEAN (no es un PROCEDURE sin valor de retorno) para
+-- respetar el mismo contrato que `Future<bool> moverTarea(...)` en Dart:
+-- `false` si la columna destino está archivada (trg_prevenir_tarea_en_
+-- columna_archivada, 15.8), sin lanzar — así quien llama (p. ej. mover
+-- varias tarjetas en lote) puede distinguir "esta no se movió" del resto
+-- y seguir con las demás, en vez de que la excepción aborte todo el lote.
+-- Cualquier OTRA excepción (WIP excedido, tarea inexistente, etc.) sí se
+-- propaga normal — solo se atrapa el SQLSTATE específico de "archivada".
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE PROCEDURE sp_mover_tarea(
+CREATE OR REPLACE FUNCTION sp_mover_tarea(
   p_tarea_id      BIGINT,
   p_nuevo_estatus VARCHAR(60),
   p_posicion      INTEGER DEFAULT NULL
-) LANGUAGE plpgsql AS $$
+) RETURNS BOOLEAN LANGUAGE plpgsql AS $$
 DECLARE
   v_workspace_id BIGINT;
   v_siguiente    INTEGER;
@@ -730,6 +894,11 @@ BEGIN
   SET estatus_id = p_nuevo_estatus,
       orden = COALESCE(p_posicion, v_siguiente)
   WHERE id = p_tarea_id;
+
+  RETURN TRUE;
+EXCEPTION
+  WHEN SQLSTATE 'KB001' THEN
+    RETURN FALSE;
 END;
 $$;
 
@@ -796,6 +965,12 @@ $$;
 -- tarea nueva (checklist, etiquetas y miembros sugeridos incluidos). El
 -- INSERT en `tarea` ya dispara trg_validar_wip_tarea, así que crear desde
 -- plantilla respeta el límite de WIP igual que crear una tarea a mano.
+--
+-- A diferencia de `NuevaTareaDialog` en Dart (que precarga `tituloSugerido`
+-- en el campo de texto pero exige que la persona confirme algo no vacío
+-- antes de guardar), esta función no pasa por ningún formulario — si la
+-- plantilla no trae `titulo_sugerido`, usa el propio nombre de la
+-- plantilla como título en vez de violar el CHECK de la sección 17.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION sp_crear_tarea_desde_plantilla(
   p_plantilla_id BIGINT,
@@ -813,7 +988,9 @@ BEGIN
     workspace_id, estatus_id, titulo, descripcion, prioridad_id, grupo,
     asignado_por, portada_color_hex
   ) VALUES (
-    p_workspace_id, p_estatus_id, v_plantilla.titulo_sugerido, v_plantilla.descripcion,
+    p_workspace_id, p_estatus_id,
+    COALESCE(NULLIF(btrim(v_plantilla.titulo_sugerido), ''), v_plantilla.nombre),
+    v_plantilla.descripcion,
     v_plantilla.prioridad_id, v_plantilla.grupo, p_asignado_por, v_plantilla.portada_color_hex
   ) RETURNING id INTO v_tarea_id;
 
@@ -838,7 +1015,10 @@ $$;
 -- estándar (mismo título/color/límite que siembra kColumnas en
 -- kanban_constants.dart) y agrega automáticamente a quien la crea como su
 -- 'dueño' — sin esto, alguien podía crear un área y quedar sin membresía
--- (y por lo tanto invisible) en su propio selector de áreas.
+-- (y por lo tanto invisible) en su propio selector de áreas. El fallback
+-- de nombre vacío ("Área de trabajo") espeja
+-- `WorkspaceRepository.crearWorkspace` en Dart — el CHECK de la sección 17
+-- es la red de seguridad si algún otro cliente/API se salta este fallback.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION sp_crear_workspace(
   p_nombre           VARCHAR(120),
@@ -849,7 +1029,8 @@ DECLARE
   v_workspace_id BIGINT;
   v_creador      usuario%ROWTYPE;
 BEGIN
-  INSERT INTO workspace (nombre, color_hex) VALUES (p_nombre, p_color_hex)
+  INSERT INTO workspace (nombre, color_hex)
+  VALUES (COALESCE(NULLIF(btrim(p_nombre), ''), 'Área de trabajo'), p_color_hex)
   RETURNING id INTO v_workspace_id;
 
   INSERT INTO kanban_columna
@@ -949,3 +1130,24 @@ BEGIN
   RETURN v_usuario_etiqueta_id;
 END;
 $$;
+
+
+-- ============================================================================
+-- 17. RESTRICCIONES ADICIONALES DE INTEGRIDAD
+-- ============================================================================
+-- Defensa en profundidad: hoy Dart ya evita nombres vacíos ANTES de llamar
+-- al repositorio (`crearWorkspace` → "Área de trabajo", `crearColumna` →
+-- "Nueva lista", `crearEtiqueta` → "Nueva etiqueta", ver los comentarios
+-- correspondientes en `in_memory_kanban_repository.dart`/
+-- `workspace_repository.dart`). Estos CHECK no duplican esa lógica de
+-- fallback (elegir el texto por defecto es una decisión de producto, no de
+-- almacenamiento) — solo garantizan que, sin importar qué cliente/API
+-- termine escribiendo aquí, nunca quede persistido un nombre en blanco que
+-- sería invisible/inseleccionable en la UI.
+ALTER TABLE workspace       ADD CONSTRAINT chk_workspace_nombre       CHECK (btrim(nombre) <> '');
+ALTER TABLE kanban_columna  ADD CONSTRAINT chk_columna_titulo         CHECK (btrim(titulo) <> '');
+ALTER TABLE tarea           ADD CONSTRAINT chk_tarea_titulo           CHECK (btrim(titulo) <> '');
+ALTER TABLE tarea_etiqueta  ADD CONSTRAINT chk_etiqueta_nombre        CHECK (btrim(nombre) <> '');
+ALTER TABLE miembro         ADD CONSTRAINT chk_miembro_nombre         CHECK (btrim(nombre) <> '');
+ALTER TABLE usuario         ADD CONSTRAINT chk_usuario_nombre         CHECK (btrim(nombre) <> '');
+ALTER TABLE tarea_plantilla ADD CONSTRAINT chk_plantilla_nombre       CHECK (btrim(nombre) <> '');

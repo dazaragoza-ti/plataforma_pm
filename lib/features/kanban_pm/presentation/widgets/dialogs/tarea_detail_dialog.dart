@@ -1481,7 +1481,18 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                             runSpacing: 6,
                             crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
-                              for (final et in _catalogoEtiquetas)
+                              // La etiqueta del comité (`kNombreEtiquetaComite`)
+                              // solo se ofrece para agregar/quitar a quien
+                              // pertenece al comité — si esta tarjeta ya la
+                              // tiene puesta, sigue mostrándose (de solo
+                              // lectura) para cualquiera, en vez de
+                              // desaparecer del todo.
+                              for (final et in _catalogoEtiquetas.where(
+                                (et) =>
+                                    et.nombre != kNombreEtiquetaComite ||
+                                    usuarioActual.value.perteneceComite ||
+                                    _etiquetaIdsSeleccionadas.contains(et.id),
+                              ))
                                 FilterChip(
                                   label: Text(
                                     et.nombre,
@@ -1501,7 +1512,11 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
                                   ),
                                   checkmarkColor: et.color,
                                   side: BorderSide(color: et.color),
-                                  onSelected: (_) => _toggleEtiqueta(et.id),
+                                  onSelected:
+                                      (et.nombre == kNombreEtiquetaComite &&
+                                          !usuarioActual.value.perteneceComite)
+                                      ? null
+                                      : (_) => _toggleEtiqueta(et.id),
                                 ),
                               ActionChip(
                                 avatar: Icon(

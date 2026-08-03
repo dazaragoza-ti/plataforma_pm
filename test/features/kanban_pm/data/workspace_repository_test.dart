@@ -12,8 +12,11 @@ void main() {
 
   test('arranca con "Mi tablero" ya creado (seed)', () async {
     final workspaces = await repo.listarWorkspaces();
-    expect(workspaces, hasLength(1));
-    expect(workspaces.first.nombre, 'Mi tablero');
+    // No `hasLength(1)`: el seed también incluye un par de áreas de
+    // ejemplo del comité ("Precios · Revisión Anual", "XLayout Premium")
+    // — lo que importa aquí es que "Mi tablero" exista, no que sea la
+    // única.
+    expect(workspaces.map((w) => w.nombre), contains('Mi tablero'));
   });
 
   group('crearWorkspace', () {

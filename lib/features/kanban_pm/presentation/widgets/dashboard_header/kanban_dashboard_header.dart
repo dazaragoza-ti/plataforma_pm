@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import '../../../data/usuario_directorio.dart';
 import '../../../kanban_constants.dart';
 
 /// Vista activa del tablero — compartida entre el header (selector de
@@ -76,6 +77,11 @@ class KanbanDashboardHeader extends StatelessWidget {
   final VoidCallback onAbrirListasArchivadas;
   final VoidCallback onAbrirTarjetasArchivadas;
 
+  /// Abre el reporte "Proyectos" — botón exclusivo de quien pertenece al
+  /// comité (ver `Usuario.perteneceComite`); el resto de las personas ni
+  /// siquiera lo ve en el header ni en el menú móvil.
+  final VoidCallback onAbrirProyectos;
+
   const KanbanDashboardHeader({
     super.key,
     this.workspaceNombre,
@@ -100,6 +106,7 @@ class KanbanDashboardHeader extends StatelessWidget {
     required this.onAbrirNuevaTarea,
     required this.onAbrirListasArchivadas,
     required this.onAbrirTarjetasArchivadas,
+    required this.onAbrirProyectos,
   });
 
   @override
@@ -336,6 +343,16 @@ class KanbanDashboardHeader extends StatelessWidget {
       etiquetaMenu: 'Nueva lista',
       onTap: onAbrirNuevaLista,
     ),
+    // Exclusivo del comité (ver `Usuario.perteneceComite`) — el resto de
+    // las personas no ve este ícono ni su entrada en el menú móvil.
+    if (usuarioActual.value.perteneceComite)
+      _AccionHeader(
+        id: 'proyectos',
+        icono: Icons.insights_rounded,
+        tooltip: 'Proyectos',
+        etiquetaMenu: 'Proyectos',
+        onTap: onAbrirProyectos,
+      ),
   ];
 
   /// Grupo derecho del header: buscador, filtros y acciones. También un

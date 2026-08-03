@@ -62,6 +62,28 @@ mixin _KanbanDashboardFiltrosMixin on _KanbanDashboardDatosMixin {
     await _cargar();
   }
 
+  /// Abre el reporte "Proyectos" — botón exclusivo del comité, ver
+  /// `Usuario.perteneceComite` y el guard equivalente en
+  /// `kanban_dashboard_header.dart`. Reenvía el mismo `WorkspaceRepository`
+  /// de esta sesión (no uno nuevo): el reporte necesita recorrer TODAS las
+  /// áreas de trabajo del comité, no solo la de este tablero.
+  void _abrirProyectos() {
+    final workspaceRepository = widget.workspaceRepository;
+    if (workspaceRepository == null) {
+      _toast(
+        'No se puede abrir "Proyectos" fuera del flujo de áreas de trabajo.',
+        ok: false,
+      );
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            ProyectosReporteScreen(workspaceRepository: workspaceRepository),
+      ),
+    );
+  }
+
   /// Además de rotar `_fondoIdx`, actualiza `KanbanColors.fondoTablero`:
   /// sin esto, las tarjetas/tiles que usan `cardDecorationConFondo` (ver
   /// [KanbanColors]) no se enteraban de qué color se eligió y se quedaban

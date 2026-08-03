@@ -11,6 +11,17 @@ export 'domain/entities/tarea_prioridad.dart';
 /// cambio futuro no exija tocarlo en varios archivos por separado.
 const kUmbralMovilKanban = 600.0;
 
+/// Nombre y color de la etiqueta reservada para el comité (ver
+/// `Usuario.perteneceComite`) — se auto-provisiona sola la primera vez que
+/// alguien del comité abre un tablero (`_cargarColumnasYEtiquetas`), y solo
+/// alguien del comité puede aplicarla/quitarla o administrarla desde
+/// "Etiquetas"; el resto la ve como una etiqueta más de solo lectura en
+/// cualquier tarjeta donde ya esté puesta. Comparado aquí (no repetido como
+/// texto suelto) para que el auto-provisionamiento y los filtros de la UI
+/// nunca puedan desincronizarse sobre cuál etiqueta es "la del comité".
+const kNombreEtiquetaComite = 'Comité';
+const kColorEtiquetaComite = Color(0xFF3730A3);
+
 /// Paleta de colores del módulo (un valor por rol visual). Dos instancias
 /// constantes (clara/oscura) viven detrás de [KanbanColors].
 class _KanbanPaleta {
@@ -269,6 +280,11 @@ const List<String> kIntegrantesDemo = [
   'R. Gómez',
   'L. Torres',
   'M. Fernández',
+  // 6to nombre → usuarioId 'u6' en el seed de `_seed()` (mismo orden que
+  // `UsuarioDirectorio`, donde Javier es 'u6') — así "Mi tablero" ya
+  // arranca con él como miembro, sin tener que crear un área de trabajo
+  // nueva a mano solo para probar la etiqueta/botón exclusivos del comité.
+  'Javier',
 ];
 
 /// Las 3 clasificaciones que se asignan a cada tarea en el detalle

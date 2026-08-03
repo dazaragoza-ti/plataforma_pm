@@ -43,6 +43,12 @@ class InMemoryKanbanRepository implements KanbanRepository {
     final etCliente = _nextEtiquetaId++;
     final etInterno = _nextEtiquetaId++;
     final etBloqueado = _nextEtiquetaId++;
+    // Sembrada desde el arranque (no lazy, como en el resto de las áreas de
+    // trabajo — ver `_cargarColumnasYEtiquetas`): "Mi tablero" es la única
+    // área de Javier, así que el reporte "Proyectos" necesita ejemplos
+    // reales que mostrar desde el primer momento, no solo tras abrir este
+    // tablero como comité.
+    final etComite = _nextEtiquetaId++;
     _etiquetas.addAll([
       TareaEtiqueta(
         id: etUrgente,
@@ -63,6 +69,11 @@ class InMemoryKanbanRepository implements KanbanRepository {
         id: etBloqueado,
         nombre: 'Bloqueado',
         color: const Color(0xFFA855F7),
+      ),
+      TareaEtiqueta(
+        id: etComite,
+        nombre: kNombreEtiquetaComite,
+        color: kColorEtiquetaComite,
       ),
     ]);
 
@@ -88,6 +99,7 @@ class InMemoryKanbanRepository implements KanbanRepository {
     final mMartinez = miembrosSeed[1];
     final mGomez = miembrosSeed[2];
     final mTorres = miembrosSeed[3];
+    final mJavier = miembrosSeed[5];
 
     final idMedidas = _nextTareaId++;
     final idMaterial = _nextTareaId++;
@@ -97,6 +109,16 @@ class InMemoryKanbanRepository implements KanbanRepository {
     final idValidar = _nextTareaId++;
     final idLogo = _nextTareaId++;
     final idServidor = _nextTareaId++;
+
+    // Ejemplos de comité (ver `etComite` arriba): un cierre reciente, uno en
+    // curso que además bloquea a otros dos (de responsables y áreas
+    // distintas, para que el aviso "tapón" del reporte tenga algo real que
+    // señalar) y uno libre sin dependencias.
+    final idComiteCierre = _nextTareaId++;
+    final idComiteEnCurso = _nextTareaId++;
+    final idComiteBloqueadaA = _nextTareaId++;
+    final idComiteBloqueadaB = _nextTareaId++;
+    final idComiteLibre = _nextTareaId++;
 
     var ordenTareas = 0;
     var ordenProceso = 0;
@@ -326,6 +348,73 @@ class InMemoryKanbanRepository implements KanbanRepository {
         ],
         orden: ordenTareas++,
       ),
+      Tarea(
+        id: idComiteCierre,
+        titulo: 'Cerrar acuerdo con proveedor estratégico',
+        estatus: TareaEstatus.terminado,
+        prioridad: TareaPrioridad.alta,
+        grupo: 'Producción',
+        miembroIds: [mSalazar],
+        asignadoPor: kUsuarioActualDemo,
+        fechaInicio: ahora.subtract(const Duration(days: 12)),
+        fechaVencimiento: ahora.subtract(const Duration(days: 7)),
+        fechaInicioReal: ahora.subtract(const Duration(days: 12)),
+        fechaFinReal: ahora.subtract(const Duration(days: 8)),
+        orden: ordenTerminado++,
+        etiquetaIds: [etComite],
+      ),
+      Tarea(
+        id: idComiteEnCurso,
+        titulo: 'Revisar contratos con clientes clave',
+        estatus: TareaEstatus.proceso,
+        prioridad: TareaPrioridad.alta,
+        grupo: 'Ventas',
+        miembroIds: [mMartinez],
+        asignadoPor: kUsuarioActualDemo,
+        fechaInicio: ahora.subtract(const Duration(days: 4)),
+        fechaVencimiento: ahora.add(const Duration(days: 5)),
+        fechaInicioReal: ahora.subtract(const Duration(days: 4)),
+        orden: ordenProceso++,
+        etiquetaIds: [etComite],
+      ),
+      Tarea(
+        id: idComiteBloqueadaA,
+        titulo: 'Actualizar política de calidad',
+        estatus: TareaEstatus.tareas,
+        prioridad: TareaPrioridad.media,
+        grupo: 'Calidad',
+        miembroIds: [mGomez],
+        asignadoPor: kUsuarioActualDemo,
+        fechaVencimiento: ahora.add(const Duration(days: 10)),
+        orden: ordenTareas++,
+        etiquetaIds: [etComite],
+        dependeDeIds: [idComiteEnCurso],
+      ),
+      Tarea(
+        id: idComiteBloqueadaB,
+        titulo: 'Preparar reporte financiero trimestral',
+        estatus: TareaEstatus.tareas,
+        prioridad: TareaPrioridad.media,
+        grupo: 'Sistemas',
+        miembroIds: [mTorres],
+        asignadoPor: kUsuarioActualDemo,
+        fechaVencimiento: ahora.add(const Duration(days: 12)),
+        orden: ordenTareas++,
+        etiquetaIds: [etComite],
+        dependeDeIds: [idComiteEnCurso],
+      ),
+      Tarea(
+        id: idComiteLibre,
+        titulo: 'Definir metas del siguiente trimestre',
+        estatus: TareaEstatus.tareas,
+        prioridad: TareaPrioridad.media,
+        grupo: 'Producción',
+        miembroIds: [mJavier],
+        asignadoPor: kUsuarioActualDemo,
+        fechaVencimiento: ahora.add(const Duration(days: 8)),
+        orden: ordenTareas++,
+        etiquetaIds: [etComite],
+      ),
     ]);
 
     _plantillas.addAll([
@@ -358,6 +447,235 @@ class InMemoryKanbanRepository implements KanbanRepository {
         prioridad: TareaPrioridad.media,
         grupo: 'Producción',
         actividades: const [],
+      ),
+    ]);
+  }
+
+  /// Área de trabajo de ejemplo "Precios · Revisión Anual" — solo la
+  /// etiqueta "Comité" y sus tareas, sin el resto del demo genérico de
+  /// negocio (no tiene sentido repetirlo en cada área). Usada por
+  /// `InMemoryWorkspaceRepository` para que el reporte "Proyectos" del
+  /// comité tenga más de un carril de ejemplo, no solo "Mi tablero".
+  InMemoryKanbanRepository.proyectoPrecios() {
+    final ahora = DateTime.now();
+    final etComite = _nextEtiquetaId++;
+    _etiquetas.add(
+      TareaEtiqueta(
+        id: etComite,
+        nombre: kNombreEtiquetaComite,
+        color: kColorEtiquetaComite,
+      ),
+    );
+
+    final mMartinez = _nextMiembroId++;
+    final mGomez = _nextMiembroId++;
+    final mJavier = _nextMiembroId++;
+    _miembros.addAll([
+      Miembro(
+        id: mMartinez,
+        nombre: 'A. Martínez',
+        colorAvatar: kColorPaletteEtiquetas[1],
+      ),
+      Miembro(
+        id: mGomez,
+        nombre: 'R. Gómez',
+        colorAvatar: kColorPaletteEtiquetas[2],
+      ),
+      Miembro(
+        id: mJavier,
+        nombre: 'Javier',
+        colorAvatar: kColorPaletteEtiquetas[5],
+        usuarioId: 'u6',
+      ),
+    ]);
+
+    final idTabulador = _nextTareaId++;
+    final idMargenes = _nextTareaId++;
+    final idPublicar = _nextTareaId++;
+    final idNotificar = _nextTareaId++;
+    var ordenTareas = 0;
+
+    _tareas.addAll([
+      Tarea(
+        id: idTabulador,
+        titulo: 'Actualizar tabulador de precios 2026',
+        estatus: TareaEstatus.terminado,
+        prioridad: TareaPrioridad.alta,
+        grupo: 'Ventas',
+        miembroIds: [mMartinez],
+        asignadoPor: kUsuarioActualDemo,
+        fechaInicio: ahora.subtract(const Duration(days: 10)),
+        fechaVencimiento: ahora.subtract(const Duration(days: 5)),
+        fechaInicioReal: ahora.subtract(const Duration(days: 10)),
+        fechaFinReal: ahora.subtract(const Duration(days: 6)),
+        etiquetaIds: [etComite],
+      ),
+      Tarea(
+        id: idMargenes,
+        titulo: 'Revisar márgenes con dirección',
+        estatus: TareaEstatus.proceso,
+        prioridad: TareaPrioridad.alta,
+        grupo: 'Ventas',
+        miembroIds: [mJavier],
+        asignadoPor: kUsuarioActualDemo,
+        fechaInicio: ahora.subtract(const Duration(days: 3)),
+        fechaVencimiento: ahora.add(const Duration(days: 4)),
+        fechaInicioReal: ahora.subtract(const Duration(days: 3)),
+        etiquetaIds: [etComite],
+      ),
+      Tarea(
+        id: idPublicar,
+        titulo: 'Publicar lista de precios actualizada',
+        estatus: TareaEstatus.tareas,
+        prioridad: TareaPrioridad.media,
+        grupo: 'Ventas',
+        miembroIds: [mGomez],
+        asignadoPor: kUsuarioActualDemo,
+        fechaVencimiento: ahora.add(const Duration(days: 9)),
+        orden: ordenTareas++,
+        etiquetaIds: [etComite],
+        dependeDeIds: [idMargenes],
+      ),
+      Tarea(
+        id: idNotificar,
+        titulo: 'Notificar a clientes clave',
+        estatus: TareaEstatus.tareas,
+        prioridad: TareaPrioridad.media,
+        grupo: 'Ventas',
+        miembroIds: [mMartinez],
+        asignadoPor: kUsuarioActualDemo,
+        fechaVencimiento: ahora.add(const Duration(days: 11)),
+        orden: ordenTareas++,
+        etiquetaIds: [etComite],
+        dependeDeIds: [idMargenes],
+      ),
+    ]);
+  }
+
+  /// Área de trabajo de ejemplo "XLayout Premium" — igual que
+  /// [InMemoryKanbanRepository.proyectoPrecios], solo la etiqueta "Comité"
+  /// y sus tareas. Aquí la tarea en curso bloquea a otras 3 de
+  /// responsables Y áreas distintas, para que el aviso "tapón" del
+  /// reporte tenga un ejemplo con más impacto que el de "Mi tablero".
+  InMemoryKanbanRepository.proyectoXLayout() {
+    final ahora = DateTime.now();
+    final etComite = _nextEtiquetaId++;
+    _etiquetas.add(
+      TareaEtiqueta(
+        id: etComite,
+        nombre: kNombreEtiquetaComite,
+        color: kColorEtiquetaComite,
+      ),
+    );
+
+    final mSalazar = _nextMiembroId++;
+    final mFernandez = _nextMiembroId++;
+    final mJavier = _nextMiembroId++;
+    _miembros.addAll([
+      Miembro(
+        id: mSalazar,
+        nombre: 'J. Salazar',
+        colorAvatar: kColorPaletteEtiquetas[0],
+      ),
+      Miembro(
+        id: mFernandez,
+        nombre: 'M. Fernández',
+        colorAvatar: kColorPaletteEtiquetas[4],
+      ),
+      Miembro(
+        id: mJavier,
+        nombre: 'Javier',
+        colorAvatar: kColorPaletteEtiquetas[5],
+        usuarioId: 'u6',
+      ),
+    ]);
+
+    final idEspecificacion = _nextTareaId++;
+    final idPrototipo = _nextTareaId++;
+    final idCatalogo = _nextTareaId++;
+    final idCapacitar = _nextTareaId++;
+    final idProduccion = _nextTareaId++;
+    final idPlanCapacitacion = _nextTareaId++;
+    var ordenTareas = 0;
+
+    _tareas.addAll([
+      Tarea(
+        id: idEspecificacion,
+        titulo: 'Cerrar especificación técnica',
+        estatus: TareaEstatus.terminado,
+        prioridad: TareaPrioridad.alta,
+        grupo: 'Diseño',
+        miembroIds: [mSalazar],
+        asignadoPor: kUsuarioActualDemo,
+        fechaInicio: ahora.subtract(const Duration(days: 15)),
+        fechaVencimiento: ahora.subtract(const Duration(days: 10)),
+        fechaInicioReal: ahora.subtract(const Duration(days: 15)),
+        fechaFinReal: ahora.subtract(const Duration(days: 11)),
+        etiquetaIds: [etComite],
+      ),
+      Tarea(
+        id: idPrototipo,
+        titulo: 'Aprobar prototipo con dirección',
+        estatus: TareaEstatus.proceso,
+        prioridad: TareaPrioridad.alta,
+        grupo: 'Diseño',
+        miembroIds: [mJavier],
+        asignadoPor: kUsuarioActualDemo,
+        fechaInicio: ahora.subtract(const Duration(days: 6)),
+        fechaVencimiento: ahora.add(const Duration(days: 2)),
+        fechaInicioReal: ahora.subtract(const Duration(days: 6)),
+        etiquetaIds: [etComite],
+      ),
+      Tarea(
+        id: idCatalogo,
+        titulo: 'Actualizar catálogo comercial',
+        estatus: TareaEstatus.tareas,
+        prioridad: TareaPrioridad.media,
+        grupo: 'Ventas',
+        miembroIds: [mFernandez],
+        asignadoPor: kUsuarioActualDemo,
+        fechaVencimiento: ahora.add(const Duration(days: 9)),
+        orden: ordenTareas++,
+        etiquetaIds: [etComite],
+        dependeDeIds: [idPrototipo],
+      ),
+      Tarea(
+        id: idCapacitar,
+        titulo: 'Capacitar al equipo de soporte',
+        estatus: TareaEstatus.tareas,
+        prioridad: TareaPrioridad.media,
+        grupo: 'Sistemas',
+        miembroIds: [mSalazar],
+        asignadoPor: kUsuarioActualDemo,
+        fechaVencimiento: ahora.add(const Duration(days: 13)),
+        orden: ordenTareas++,
+        etiquetaIds: [etComite],
+        dependeDeIds: [idPrototipo],
+      ),
+      Tarea(
+        id: idProduccion,
+        titulo: 'Programar producción inicial',
+        estatus: TareaEstatus.tareas,
+        prioridad: TareaPrioridad.media,
+        grupo: 'Producción',
+        miembroIds: [mJavier],
+        asignadoPor: kUsuarioActualDemo,
+        fechaVencimiento: ahora.add(const Duration(days: 15)),
+        orden: ordenTareas++,
+        etiquetaIds: [etComite],
+        dependeDeIds: [idPrototipo],
+      ),
+      Tarea(
+        id: idPlanCapacitacion,
+        titulo: 'Definir plan de capacitación',
+        estatus: TareaEstatus.tareas,
+        prioridad: TareaPrioridad.baja,
+        grupo: 'Ventas',
+        miembroIds: [mFernandez],
+        asignadoPor: kUsuarioActualDemo,
+        fechaVencimiento: ahora.add(const Duration(days: 6)),
+        orden: ordenTareas++,
+        etiquetaIds: [etComite],
       ),
     ]);
   }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../kanban_constants.dart';
 import '../../data/kanban_repository.dart';
 import '../../data/usuario_directorio.dart';
+import '../../data/workspace_repository.dart';
 import '../../domain/entities/actividad.dart';
 import '../../domain/entities/miembro.dart';
 import '../../domain/entities/tarea.dart';
@@ -25,6 +26,7 @@ import '../widgets/dialogs/nueva_tarea_dialog.dart';
 import '../widgets/dialogs/pausar_tarea_dialog.dart';
 import '../widgets/dialogs/plantillas_dialog.dart';
 import '../widgets/dialogs/tarea_detail_dialog.dart';
+import 'proyectos_reporte_screen.dart';
 
 part 'kanban_dashboard/core.dart';
 part 'kanban_dashboard/datos.dart';
@@ -61,11 +63,20 @@ class KanbanDashboardScreen extends StatefulWidget {
   final String? workspaceNombre;
   final Color? workspaceColor;
 
+  /// El [WorkspaceRepository] que ya está en uso para esta sesión (el mismo
+  /// que listó las áreas de trabajo antes de entrar aquí) — se reenvía a
+  /// [ProyectosReporteScreen] (botón "Proyectos", solo comité) para que
+  /// pueda recorrer TODAS las áreas de trabajo del comité, no solo la
+  /// actual. `null` cuando este tablero se abre fuera del flujo de áreas de
+  /// trabajo (ahí "Proyectos" simplemente no tiene de dónde sacar datos).
+  final WorkspaceRepository? workspaceRepository;
+
   const KanbanDashboardScreen({
     super.key,
     this.repository,
     this.workspaceNombre,
     this.workspaceColor,
+    this.workspaceRepository,
   });
 
   @override
@@ -298,6 +309,7 @@ class _KanbanDashboardScreenState extends State<KanbanDashboardScreen>
               onAbrirNuevaTarea: _abrirNuevaTarea,
               onAbrirListasArchivadas: _abrirListasArchivadas,
               onAbrirTarjetasArchivadas: _abrirTarjetasArchivadas,
+              onAbrirProyectos: _abrirProyectos,
             ),
             Expanded(
               child: _cargando

@@ -67,6 +67,32 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
       ),
     );
     _repos[id] = InMemoryKanbanRepository();
+
+    // Dos áreas más, ambas con Javier como miembro (`usuarioId: 'u6'`) y
+    // solo ejemplos de la etiqueta "Comité" — así el reporte "Proyectos"
+    // (botón exclusivo del comité) tiene más de un carril de ejemplo desde
+    // el arranque, no solo "Mi tablero".
+    final idPrecios = 'ws_${_nextId++}';
+    _workspaces.add(
+      Workspace(
+        id: idPrecios,
+        nombre: 'Precios · Revisión Anual',
+        color: const Color(0xFF2E6BE6),
+        fechaCreacion: DateTime.now(),
+      ),
+    );
+    _repos[idPrecios] = InMemoryKanbanRepository.proyectoPrecios();
+
+    final idXLayout = 'ws_${_nextId++}';
+    _workspaces.add(
+      Workspace(
+        id: idXLayout,
+        nombre: 'XLayout Premium',
+        color: const Color(0xFF0E9488),
+        fechaCreacion: DateTime.now(),
+      ),
+    );
+    _repos[idXLayout] = InMemoryKanbanRepository.proyectoXLayout();
   }
 
   @override

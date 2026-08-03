@@ -222,6 +222,7 @@ class _WorkspaceSelectorScreenState extends State<WorkspaceSelectorScreen> {
           repository: _repo.kanbanRepositoryPara(w.id),
           workspaceNombre: w.nombre,
           workspaceColor: w.color,
+          workspaceRepository: _repo,
         ),
       ),
     );

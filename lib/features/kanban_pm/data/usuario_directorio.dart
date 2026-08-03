@@ -17,6 +17,13 @@ class UsuarioDirectorio {
     Usuario(id: 'u3', nombre: 'R. Gómez', colorAvatar: Color(0xFFEAB308)),
     Usuario(id: 'u4', nombre: 'L. Torres', colorAvatar: Color(0xFF22C55E)),
     Usuario(id: 'u5', nombre: 'M. Fernández', colorAvatar: Color(0xFF14B8A6)),
+    // Único integrante del comité por ahora — ver Usuario.perteneceComite.
+    Usuario(
+      id: 'u6',
+      nombre: 'Javier',
+      colorAvatar: Color(0xFF6366F1),
+      perteneceComite: true,
+    ),
   ];
 
   List<Usuario> listar() => List.unmodifiable(_usuarios);

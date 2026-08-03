@@ -11,9 +11,18 @@ class Usuario {
   final String nombre;
   final Color colorAvatar;
 
+  /// `true` si esta persona pertenece al comité — hoy la única diferencia
+  /// que hace en la práctica es exponerle la etiqueta "Comité" (para
+  /// marcar tarjetas del Kanban) y el botón "Proyectos" del header del
+  /// tablero, ambos ocultos para el resto. No es un rol de workspace (ese
+  /// es "dueño/miembro/invitado", por área) — es un atributo de la
+  /// persona misma, igual que su nombre o su color.
+  final bool perteneceComite;
+
   const Usuario({
     required this.id,
     required this.nombre,
     required this.colorAvatar,
+    this.perteneceComite = false,
   });
 }
