@@ -563,10 +563,10 @@ mixin _ProyectosSeccionesMixin {
         ),
       ],
     );
-    // Una sola card por tarjeta (no un listado siempre desplegado): al
-    // tocarla se expande mostrando sus actividades y subtareas — evita
+    // Cada actividad de nivel superior de la tarjeta es su propia card
+    // (`_ChecklistTarea`/`_ListaActividadCard`), visible de entrada — evita
     // repetir el título de la tarjeta (ya está en `p.nombre` arriba).
-    final tarjetaActividades = _CardActividadesTarea(
+    final tarjetaActividades = _ChecklistTarea(
       tarea: tarea,
       colorProyecto: p.color,
       alRefrescar: alRefrescar,
@@ -711,114 +711,216 @@ Widget _filaActividadReporte(
   );
 }
 
-/// Card compacta del checklist de una tarjeta "Comité": colapsada muestra
-/// solo un resumen ("N actividades" · "X/N completadas") para no repetir el
-/// título de la tarjeta (ya está en el encabezado del carril) — tocarla
-/// despliega sus actividades y subtareas en secuencia. El icono aparte abre
-/// la tarjeta completa de verdad (`TareaDetailDialog`), para quien quiera
+/// Checklist de una tarjeta "Comité": cada actividad de nivel superior es
+/// su propia card independiente (`_ListaActividadCard`), visible de
+/// entrada — no hay una card "padre" que envuelva a todas y que haya que
+/// abrir primero para verlas (eso mezclaba todas las listas de la tarjeta
+/// en una sola secuencia bajo un único interruptor). El icono abre la
+/// tarjeta completa de verdad (`TareaDetailDialog`), para quien quiera
 /// editarla en vez de solo consultar el checklist.
-class _CardActividadesTarea extends StatefulWidget {
+class _ChecklistTarea extends StatelessWidget {
   final _TareaReporte tarea;
   final Color colorProyecto;
   final VoidCallback alRefrescar;
 
-  const _CardActividadesTarea({
+  const _ChecklistTarea({
     required this.tarea,
     required this.colorProyecto,
     required this.alRefrescar,
   });
 
   @override
-  State<_CardActividadesTarea> createState() => _CardActividadesTareaState();
+  Widget build(BuildContext context) {
+    final t = tarea;
+    final total = _contarActividadesReporte(t.actividades);
+    final terminadas = _contarTerminadasReporte(t.actividades);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                total == 0 ? 'Sin actividades' : '$terminadas/$total completadas',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: KanbanColors.texto,
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Abrir tarjeta completa',
+              icon: Icon(
+                Icons.open_in_full_rounded,
+                size: 15,
+                color: KanbanColors.tdim,
+              ),
+              onPressed: () => TareaDetailDialog.show(
+                context,
+                repository: t.repo,
+                tareaId: t.tareaIdReal,
+                onRefresh: alRefrescar,
+              ),
+            ),
+          ],
+        ),
+        if (total > 0) ...[
+          const SizedBox(height: 8),
+          // Una card individual por actividad de nivel superior (p. ej.
+          // "Recopilar normativa vigente" con sus 2 subtareas), en fila una
+          // junto a otra — cada una se expande/colapsa por separado de las
+          // demás. `Wrap` (no `Row`) para que quepan varias por fila en
+          // pantallas anchas sin desbordar en las angostas (móvil): ahí
+          // simplemente bajan a la siguiente fila.
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final a in t.actividades)
+                SizedBox(
+                  width: 220,
+                  child: _ListaActividadCard(
+                    actividad: a,
+                    colorProyecto: colorProyecto,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
 }
 
-class _CardActividadesTareaState extends State<_CardActividadesTarea> {
-  bool _expandido = false;
+/// Una "lista de tareas" del checklist: una actividad de nivel superior
+/// junto con sus subtareas, en su propia card — se expande/colapsa por
+/// separado del resto de las listas de la misma tarjeta (antes todas las
+/// listas de nivel superior se mezclaban en una sola secuencia plana bajo
+/// un único interruptor de la tarjeta completa).
+class _ListaActividadCard extends StatefulWidget {
+  final _ActividadReporte actividad;
+  final Color colorProyecto;
+
+  const _ListaActividadCard({
+    required this.actividad,
+    required this.colorProyecto,
+  });
+
+  @override
+  State<_ListaActividadCard> createState() => _ListaActividadCardState();
+}
+
+class _ListaActividadCardState extends State<_ListaActividadCard> {
+  // Expandida por defecto: a diferencia de la card de la tarjeta completa
+  // (que sí conviene colapsada para no abrumar el carril), cada lista
+  // individual es lo que el usuario vino a leer.
+  bool _expandido = true;
 
   @override
   Widget build(BuildContext context) {
-    final t = widget.tarea;
-    final total = _contarActividadesReporte(t.actividades);
-    final terminadas = _contarTerminadasReporte(t.actividades);
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
+    final a = widget.actividad;
+    final tieneSub = a.subActividades.isNotEmpty;
+    final total = _contarActividadesReporte(a.subActividades);
+    final terminadas = _contarTerminadasReporte(a.subActividades);
+    return Container(
+      decoration: BoxDecoration(
+        color: KanbanColors.bg,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: KanbanColors.borde),
+      ),
       clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: total == 0
-            ? null
-            : () => setState(() => _expandido = !_expandido),
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: KanbanColors.bg2,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: KanbanColors.borde),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          total == 0
-                              ? 'Sin actividades'
-                              : '$total ${total == 1 ? 'actividad' : 'actividades'}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: KanbanColors.texto,
-                          ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: tieneSub
+              ? () => setState(() => _expandido = !_expandido)
+              : null,
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 13,
+                      height: 13,
+                      margin: const EdgeInsets.only(top: 1.5, right: 6),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: a.terminada
+                            ? widget.colorProyecto
+                            : Colors.transparent,
+                        border: Border.all(
+                          color: widget.colorProyecto,
+                          width: 1.3,
                         ),
-                        if (total > 0) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            '$terminadas/$total completadas',
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              color: KanbanColors.tdim,
-                            ),
-                          ),
-                        ],
-                      ],
+                      ),
+                      alignment: Alignment.center,
+                      child: a.terminada
+                          ? const Icon(Icons.check, size: 9, color: Colors.white)
+                          : null,
                     ),
-                  ),
-                  IconButton(
-                    tooltip: 'Abrir tarjeta completa',
-                    icon: Icon(
-                      Icons.open_in_full_rounded,
-                      size: 15,
-                      color: KanbanColors.tdim,
+                    Expanded(
+                      child: Text(
+                        a.descripcion,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          color: a.terminada
+                              ? KanbanColors.tdim
+                              : KanbanColors.texto,
+                          decoration: a.terminada
+                              ? TextDecoration.lineThrough
+                              : null,
+                        ),
+                      ),
                     ),
-                    onPressed: () => TareaDetailDialog.show(
-                      context,
-                      repository: t.repo,
-                      tareaId: t.tareaIdReal,
-                      onRefresh: widget.alRefrescar,
-                    ),
-                  ),
-                  if (total > 0)
-                    Icon(
-                      _expandido
-                          ? Icons.expand_less_rounded
-                          : Icons.expand_more_rounded,
-                      size: 18,
-                      color: KanbanColors.tdim,
-                    ),
+                    if (a.responsable != null) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        a.responsable!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w600,
+                          color: KanbanColors.tdim,
+                        ),
+                      ),
+                    ],
+                    if (tieneSub) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        '$terminadas/$total',
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w700,
+                          color: KanbanColors.tdim,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        _expandido
+                            ? Icons.expand_less_rounded
+                            : Icons.expand_more_rounded,
+                        size: 16,
+                        color: KanbanColors.tdim,
+                      ),
+                    ],
+                  ],
+                ),
+                if (_expandido && tieneSub) ...[
+                  const SizedBox(height: 6),
+                  for (final hija in a.subActividades)
+                    _filaActividadReporte(hija, widget.colorProyecto),
                 ],
-              ),
-              if (_expandido && total > 0) ...[
-                const SizedBox(height: 8),
-                for (final a in t.actividades)
-                  _filaActividadReporte(a, widget.colorProyecto),
               ],
-            ],
+            ),
           ),
         ),
       ),
