@@ -1612,8 +1612,19 @@ class InMemoryKanbanRepository implements KanbanRepository {
     );
   }
 
-  bool _mismosIds(List<int> a, List<int> b) =>
-      a.length == b.length && a.toSet().containsAll(b);
+  // Comparación por conjunto (el orden no importa para etiquetas/miembros/
+  // dependencias) — `.toSet()` en AMBOS lados antes de comparar, no solo en
+  // `a`: comparar `a.length` (sin deduplicar) contra un `containsAll`
+  // unidireccional daba falsos "sin cambios" cuando una lista traía un id
+  // duplicado, p. ej. `_mismosIds([1, 2], [1, 1])` decía `true` (mismo
+  // `length`, y `{1,2}` sí contiene a `1`) aunque el miembro 2 en realidad
+  // se hubiera perdido — silenciaba el registro de historial "cambió los
+  // asignados" en ese caso.
+  bool _mismosIds(List<int> a, List<int> b) {
+    final sa = a.toSet();
+    final sb = b.toSet();
+    return sa.length == sb.length && sa.containsAll(sb);
+  }
 
   /// Compara [anterior] contra [nueva] y agrega al historial un único
   /// mensaje combinado con lo que cambió — sin registrar nada si el
@@ -1699,6 +1710,17 @@ class InMemoryKanbanRepository implements KanbanRepository {
   }) async {
     await _latencia();
     final idx = _indice(tareaId);
+    // `_conSubactividadAgregada` inserta solo si encuentra un nodo con
+    // `id == padreId` en el árbol — si `padreId` ya no existe (p. ej. se
+    // borró mientras este `await` estaba en curso, o dos vistas del mismo
+    // detalle desincronizadas) devuelve el árbol intacto sin avisar, y
+    // sin este chequeo la llamada igual reportaba éxito (un id nuevo) y
+    // registraba en el historial "Agregó la subtarea" aunque el texto del
+    // usuario se hubiera perdido en silencio.
+    if (padreId != null &&
+        _buscarActividad(_tareas[idx].actividades, padreId) == null) {
+      throw Exception('Actividad padre #$padreId no encontrada');
+    }
     final id = _nextActividadId++;
     final nueva = Actividad(id: id, descripcion: descripcion);
     final actividades = padreId == null

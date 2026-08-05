@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plataforma_pm/features/kanban_pm/data/usuario_directorio.dart';
 import 'package:plataforma_pm/features/kanban_pm/data/workspace_repository.dart';
+import 'package:plataforma_pm/features/kanban_pm/domain/entities/actividad.dart';
 import 'package:plataforma_pm/features/kanban_pm/domain/entities/tarea.dart';
 import 'package:plataforma_pm/features/kanban_pm/kanban_constants.dart';
 import 'package:plataforma_pm/features/kanban_pm/presentation/screens/proyectos_reporte_screen.dart';
@@ -66,6 +67,13 @@ Future<WorkspaceRepository> _repoConDatosComite() async {
       // La fecha más tardía del conjunto: su barra debe llegar exactamente
       // al 100% del rango del calendario.
       fechaVencimiento: DateTime(2026, 2, 1),
+      // Checklist con 1 de 2 completada — regresión: el % del carril debe
+      // salir de este conteo, no solo de si la tarjeta está cerrada (que
+      // no lo está: sigue "en curso").
+      actividades: [
+        Actividad(id: 1, descripcion: 'Sub 1', terminada: true),
+        Actividad(id: 2, descripcion: 'Sub 2', terminada: false),
+      ],
     ),
   );
   await repo.crearTarea(
@@ -132,6 +140,21 @@ void main() {
     expect(find.text('QUÉ DEBE CERRAR CADA QUIEN'), findsOneWidget);
     expect(find.text('CALENDARIO (SIMPLIFICADO)'), findsOneWidget);
   });
+
+  testWidgets(
+    'el % del carril refleja el checklist de actividades, no solo si la '
+    'tarjeta está cerrada',
+    (tester) async {
+      // Regresión: al pasar cada carril a representar UNA tarjeta, el %
+      // mostrado se calculaba como 0%/100% binario según `t.cerrada`
+      // (siempre 0% mientras la tarjeta siguiera abierta) en vez de sacarlo
+      // del checklist real — marcar actividades no movía la barra.
+      // "Tarea abierta más tardía" está "en curso" (no cerrada) con 1 de 2
+      // actividades completadas: debe mostrar 50%, no 0%.
+      await bombear(tester, const Size(1400, 1000));
+      expect(find.text('50%'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'la barra del calendario no se sale de su pista en escritorio',

@@ -47,6 +47,12 @@ class _TarjetasArchivadasDialogState extends State<TarjetasArchivadasDialog> {
   List<KanbanColumna> _columnas = [];
   bool _cargando = true;
 
+  /// Ids de tarea con un `_desarchivar` en curso — sin esto, un doble tap
+  /// sobre "Desarchivar" antes de que el primer `archivarTarea` resolviera
+  /// disparaba `onDesarchivada()` (el refresco del tablero) dos veces por
+  /// la misma tarjeta.
+  final Set<int> _desarchivando = {};
+
   @override
   void initState() {
     super.initState();
@@ -75,6 +81,8 @@ class _TarjetasArchivadasDialogState extends State<TarjetasArchivadasDialog> {
   }
 
   Future<void> _desarchivar(Tarea t) async {
+    if (_desarchivando.contains(t.id)) return;
+    setState(() => _desarchivando.add(t.id));
     try {
       await widget.repository.archivarTarea(t.id, false);
       // Se llama SIN condicionar a `mounted`: es la única forma en que el
@@ -108,6 +116,8 @@ class _TarjetasArchivadasDialogState extends State<TarjetasArchivadasDialog> {
     } catch (ex) {
       if (!mounted) return;
       kanbanToast(context, 'Error al desarchivar: $ex', ok: false);
+    } finally {
+      if (mounted) setState(() => _desarchivando.remove(t.id));
     }
   }
 
@@ -147,7 +157,9 @@ class _TarjetasArchivadasDialogState extends State<TarjetasArchivadasDialog> {
                               ),
                             ),
                       trailing: TextButton(
-                        onPressed: () => _desarchivar(t),
+                        onPressed: _desarchivando.contains(t.id)
+                            ? null
+                            : () => _desarchivar(t),
                         child: const Text('Desarchivar'),
                       ),
                     ),

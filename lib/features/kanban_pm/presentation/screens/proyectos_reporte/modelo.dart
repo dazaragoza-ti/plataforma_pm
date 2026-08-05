@@ -71,12 +71,19 @@ class _TareaReporte {
 /// miembros de cada área en el punto donde se dibuja, así que se resuelve
 /// una sola vez al cargar los datos (ver `_actividadesReporte`).
 class _ActividadReporte {
+  /// El id real de la [Actividad] que representa — permite dar a cada
+  /// card del checklist (`_ListaActividadCard`) una `Key` estable entre
+  /// refrescos, en vez de que Flutter reconcilie por posición (ver
+  /// `_ChecklistTarea`: sin esto, borrar/reordenar una actividad de nivel
+  /// superior le pega el estado expandido/colapsado de una card a otra).
+  final int id;
   final String descripcion;
   final bool terminada;
   final String? responsable;
   final List<_ActividadReporte> subActividades;
 
   const _ActividadReporte({
+    required this.id,
     required this.descripcion,
     required this.terminada,
     this.responsable,

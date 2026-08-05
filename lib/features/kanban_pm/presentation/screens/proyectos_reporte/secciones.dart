@@ -780,6 +780,7 @@ class _ChecklistTarea extends StatelessWidget {
             children: [
               for (final a in t.actividades)
                 SizedBox(
+                  key: ValueKey('lista_actividad_${a.id}'),
                   width: 220,
                   child: _ListaActividadCard(
                     actividad: a,

@@ -50,6 +50,12 @@ class _WorkspaceMiembrosDialogState extends State<WorkspaceMiembrosDialog> {
   /// `usuarioId`, ya que el repositorio no deduplica por ese campo.
   final Set<String> _agregando = {};
 
+  /// Ids de miembro con un `_quitar` en curso — mismo motivo que
+  /// `_agregando`: sin esto, un doble tap rápido antes de que el primer
+  /// `confirmarEliminar` termine de renderizarse abría dos diálogos de
+  /// confirmación apilados sobre la misma persona.
+  final Set<int> _quitando = {};
+
   @override
   void initState() {
     super.initState();
@@ -93,6 +99,7 @@ class _WorkspaceMiembrosDialogState extends State<WorkspaceMiembrosDialog> {
   }
 
   Future<void> _quitar(Miembro m) async {
+    if (_quitando.contains(m.id)) return;
     // Aviso temprano, antes de molestar con el diálogo de confirmación —
     // pero NO es la única protección: el repositorio (`eliminarMiembro`)
     // vuelve a evaluar lo mismo justo antes de escribir. Si este chequeo
@@ -114,17 +121,18 @@ class _WorkspaceMiembrosDialogState extends State<WorkspaceMiembrosDialog> {
       );
       return;
     }
-    final ok = await confirmarEliminar(
-      context,
-      titulo: 'Quitar miembro',
-      mensaje:
-          '¿Quitar a "${m.nombre}" de "${widget.tituloWorkspace}"? Se le '
-          'quita de las tarjetas y subtareas donde estuviera asignado en '
-          'esta área.',
-      etiquetaConfirmar: 'Quitar',
-    );
-    if (!ok) return;
+    setState(() => _quitando.add(m.id));
     try {
+      final ok = await confirmarEliminar(
+        context,
+        titulo: 'Quitar miembro',
+        mensaje:
+            '¿Quitar a "${m.nombre}" de "${widget.tituloWorkspace}"? Se le '
+            'quita de las tarjetas y subtareas donde estuviera asignado en '
+            'esta área.',
+        etiquetaConfirmar: 'Quitar',
+      );
+      if (!ok) return;
       final quitado = await widget.repository.eliminarMiembro(m.id);
       if (!quitado) {
         if (!mounted) return;
@@ -138,6 +146,8 @@ class _WorkspaceMiembrosDialogState extends State<WorkspaceMiembrosDialog> {
       await _cargar();
     } catch (ex) {
       _error(ex);
+    } finally {
+      if (mounted) setState(() => _quitando.remove(m.id));
     }
   }
 
@@ -280,7 +290,7 @@ class _WorkspaceMiembrosDialogState extends State<WorkspaceMiembrosDialog> {
               size: 18,
               color: KanbanColors.tdim,
             ),
-            onPressed: () => _quitar(m),
+            onPressed: _quitando.contains(m.id) ? null : () => _quitar(m),
           ),
         ],
       ),

@@ -84,6 +84,7 @@ List<_ActividadReporte> _actividadesReporte(
   return [
     for (final a in lista)
       _ActividadReporte(
+        id: a.id,
         descripcion: a.descripcion,
         terminada: a.terminada,
         responsable: a.miembroId != null
@@ -222,11 +223,6 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
       if (t.vencida) diasTarde++;
 
       final inicioTarea = t.fechaInicio ?? t.fechaInicioReal;
-      if (inicioTarea != null) {
-        if (rangoInicio == null || inicioTarea.isBefore(rangoInicio)) {
-          rangoInicio = inicioTarea;
-        }
-      }
       if (t.fechaVencimiento != null) {
         if (cierrePlan == null || t.fechaVencimiento!.isAfter(cierrePlan)) {
           cierrePlan = t.fechaVencimiento;
@@ -243,9 +239,23 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
       final finTarea = t.cerrada
           ? (t.fechaFinReal ?? t.fechaVencimiento)
           : t.fechaVencimiento;
-      if (finTarea != null) {
-        if (rangoFin == null || finTarea.isAfter(rangoFin)) {
-          rangoFin = finTarea;
+      // `rangoInicio`/`rangoFin` (el rango GLOBAL que usa el calendario
+      // simplificado) se calculan sobre el mismo conjunto de fechas —
+      // inicio Y fin de cada tarjeta — en vez de "mínimo de los inicios"
+      // por un lado y "máximo de los fines" por otro: con fondos
+      // independientes, una tarjeta que solo tiene fecha de inicio (tardía)
+      // y otra que solo tiene fecha de fin (temprana) podían invertir el
+      // rango (`rangoFin` < `rangoInicio`), rompiendo las proporciones de
+      // toda la franja del calendario. Tomar el mínimo/máximo sobre la
+      // unión de ambas fechas por tarjeta garantiza `rangoInicio <=
+      // rangoFin` sin importar qué combinación de fechas falte.
+      for (final fecha in [inicioTarea, finTarea]) {
+        if (fecha == null) continue;
+        if (rangoInicio == null || fecha.isBefore(rangoInicio)) {
+          rangoInicio = fecha;
+        }
+        if (rangoFin == null || fecha.isAfter(rangoFin)) {
+          rangoFin = fecha;
         }
       }
 
@@ -295,15 +305,23 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
       );
 
       // Cada tarjeta "Comité" es su propio carril "ÁREA NN" — ver el doc
-      // comment de `_cargarReporteProyectos`.
+      // comment de `_cargarReporteProyectos`. La barra de progreso del
+      // carril refleja el checklist real (mismo conteo que las cards de
+      // `_ChecklistTarea`/`_ListaActividadCard`), no solo si la tarjeta
+      // está cerrada — si no, marcar actividades del checklist no movía el
+      // % mostrado arriba. Sin actividades, cae de vuelta al estatus
+      // binario de la tarjeta (no hay checklist del que sacar un %).
+      final actividadesTotales = t.actividadesTotales;
       indice++;
       proyectos.add(
         _ProyectoReporte(
           numero: 'ÁREA ${indice.toString().padLeft(2, '0')}',
           nombre: t.titulo,
           color: w.color,
-          cerradas: t.cerrada ? 1 : 0,
-          total: 1,
+          cerradas: actividadesTotales == 0
+              ? (t.cerrada ? 1 : 0)
+              : t.actividadesTerminadas,
+          total: actividadesTotales == 0 ? 1 : actividadesTotales,
           resumenFecha: finTarea == null
               ? 'sin fecha'
               : 'cierra ${kanbanFechaCompacta(finTarea)}',

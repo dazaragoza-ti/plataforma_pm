@@ -732,11 +732,31 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
     final desc = _nuevaActividadCtrl.text.trim();
     if (desc.isEmpty) return;
     _nuevaActividadCtrl.clear();
-    await widget.repository.agregarActividad(
-      widget.tareaId,
-      desc,
-      padreId: padreId,
-    );
+    try {
+      await widget.repository.agregarActividad(
+        widget.tareaId,
+        desc,
+        padreId: padreId,
+      );
+    } catch (ex) {
+      // El repositorio lanza si `padreId` ya no existe (p. ej. alguien lo
+      // borró mientras este diálogo lo seguía mostrando) — sin este catch,
+      // el texto ya se había limpiado del campo (arriba) y la excepción se
+      // perdía sin aviso, dejando a quien escribió creyendo que su
+      // subtarea se guardó cuando en realidad nunca se creó.
+      debugPrint('Error al agregar subtarea: $ex');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'No se pudo agregar la subtarea. Intenta de nuevo.',
+            ),
+            backgroundColor: KanbanColors.danger,
+          ),
+        );
+      }
+      return;
+    }
     // Sin condicionar a `mounted`: es la única forma en que el tablero
     // (`KanbanDashboardScreen`) se entera de que esta tarjeta tiene una
     // actividad nueva. Mismo motivo que `_eliminarActividad`/
@@ -761,9 +781,22 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
   }
 
   Future<void> _toggleActividad(int actividadId) async {
-    await widget.repository.toggleActividad(widget.tareaId, actividadId);
-    widget.onRefresh();
-    await _cargar();
+    // Mismo `_guardando` compartido que `_eliminarActividad`/`_guardar`:
+    // sin esto, dos taps rápidos sobre el mismo checkbox (fácil en touch,
+    // o dos personas editando la misma tarea) podían solaparse durante la
+    // latencia simulada del repositorio — la segunda llamada leía el
+    // estado que la primera acababa de escribir y lo revertía, dejando el
+    // checkbox sin cambio visible pero dos entradas contradictorias en el
+    // historial.
+    if (_guardando) return;
+    setState(() => _guardando = true);
+    try {
+      await widget.repository.toggleActividad(widget.tareaId, actividadId);
+      widget.onRefresh();
+      await _cargar();
+    } finally {
+      if (mounted) setState(() => _guardando = false);
+    }
   }
 
   Future<void> _eliminarActividad(int actividadId) async {
@@ -1256,7 +1289,9 @@ class _TareaDetailDialogState extends State<TareaDetailDialog> {
               Checkbox(
                 value: a.terminada,
                 activeColor: KanbanColors.toolbarTeal,
-                onChanged: esLista ? null : (_) => _toggleActividad(a.id),
+                onChanged: esLista || _guardando
+                    ? null
+                    : (_) => _toggleActividad(a.id),
               ),
               Expanded(
                 child: Column(
