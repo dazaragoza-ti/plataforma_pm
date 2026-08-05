@@ -462,10 +462,10 @@ mixin _ProyectosResponsablesCalendarioMixin {
                     ),
                   ),
                   Expanded(
-                    // Clave por `nombre` (identidad real del área de
-                    // trabajo), no por `numero` (un índice de posición que
-                    // ya no viene de un catálogo fijo, sino del orden en
-                    // que se recorren las áreas del comité).
+                    // Clave por `nombre` (el título de la tarjeta, su
+                    // identidad real), no por `numero` (un índice de
+                    // posición que depende del orden en que se recorren
+                    // las tarjetas "Comité" del comité).
                     key: ValueKey('pista_${p.nombre}'),
                     child: LayoutBuilder(
                       builder: (context, constraints) => barra(

@@ -360,6 +360,68 @@ class InMemoryKanbanRepository implements KanbanRepository {
         fechaVencimiento: ahora.subtract(const Duration(days: 7)),
         fechaInicioReal: ahora.subtract(const Duration(days: 12)),
         fechaFinReal: ahora.subtract(const Duration(days: 8)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Negociar condiciones comerciales',
+            terminada: true,
+            miembroId: mSalazar,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Definir alcance de la negociación',
+                terminada: true,
+                miembroId: mSalazar,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Acordar plazos de entrega',
+                terminada: true,
+                miembroId: mSalazar,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Revisar cláusulas legales',
+            terminada: true,
+            departamento: 'Legal',
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Revisar cláusula de penalización',
+                terminada: true,
+                departamento: 'Legal',
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Revisar cláusula de confidencialidad',
+                terminada: true,
+                departamento: 'Legal',
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Firmar contrato',
+            terminada: true,
+            miembroId: mSalazar,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Obtener firma del proveedor',
+                terminada: true,
+                miembroId: mSalazar,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Obtener firma de dirección',
+                terminada: true,
+                miembroId: mSalazar,
+              ),
+            ],
+          ),
+        ],
         orden: ordenTerminado++,
         etiquetaIds: [etComite],
       ),
@@ -374,6 +436,60 @@ class InMemoryKanbanRepository implements KanbanRepository {
         fechaInicio: ahora.subtract(const Duration(days: 4)),
         fechaVencimiento: ahora.add(const Duration(days: 5)),
         fechaInicioReal: ahora.subtract(const Duration(days: 4)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Recopilar contratos vigentes',
+            terminada: true,
+            miembroId: mMartinez,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Contratos de venta',
+                terminada: true,
+                miembroId: mMartinez,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Contratos de servicio',
+                terminada: true,
+                miembroId: mMartinez,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Revisar cláusulas de renovación',
+            miembroId: mMartinez,
+            // Hereda el mismo responsable de su actividad contenedora
+            // (ver `asignarResponsableActividad`): delegar una subtarea con
+            // hijas se lo asigna también a todas ellas.
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Cliente A',
+                terminada: true,
+                miembroId: mMartinez,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Cliente B',
+                miembroId: mMartinez,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Presentar hallazgos a dirección',
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Preparar resumen ejecutivo',
+              ),
+              Actividad(id: _nextActividadId++, descripcion: 'Agendar reunión'),
+            ],
+          ),
+        ],
         orden: ordenProceso++,
         etiquetaIds: [etComite],
       ),
@@ -386,6 +502,47 @@ class InMemoryKanbanRepository implements KanbanRepository {
         miembroIds: [mGomez],
         asignadoPor: kUsuarioActualDemo,
         fechaVencimiento: ahora.add(const Duration(days: 10)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Recopilar normativa vigente',
+            departamento: 'Calidad',
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Norma ISO 9001',
+                departamento: 'Calidad',
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Normas internas vigentes',
+                departamento: 'Calidad',
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Redactar nueva versión',
+            subActividades: [
+              Actividad(id: _nextActividadId++, descripcion: 'Borrador inicial'),
+              Actividad(id: _nextActividadId++, descripcion: 'Revisión de estilo'),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Validar con jefatura',
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Enviar para revisión',
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Incorporar comentarios',
+              ),
+            ],
+          ),
+        ],
         orden: ordenTareas++,
         etiquetaIds: [etComite],
         dependeDeIds: [idComiteEnCurso],
@@ -399,6 +556,50 @@ class InMemoryKanbanRepository implements KanbanRepository {
         miembroIds: [mTorres],
         asignadoPor: kUsuarioActualDemo,
         fechaVencimiento: ahora.add(const Duration(days: 12)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Consolidar cifras de ventas',
+            miembroId: mTorres,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Ventas por región',
+                miembroId: mTorres,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Ventas por producto',
+                miembroId: mTorres,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Consolidar cifras de gastos',
+            miembroId: mTorres,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Gastos operativos',
+                miembroId: mTorres,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Gastos administrativos',
+                miembroId: mTorres,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Redactar resumen ejecutivo',
+            subActividades: [
+              Actividad(id: _nextActividadId++, descripcion: 'Primer borrador'),
+              Actividad(id: _nextActividadId++, descripcion: 'Revisión final'),
+            ],
+          ),
+        ],
         orden: ordenTareas++,
         etiquetaIds: [etComite],
         dependeDeIds: [idComiteEnCurso],
@@ -412,6 +613,34 @@ class InMemoryKanbanRepository implements KanbanRepository {
         miembroIds: [mJavier],
         asignadoPor: kUsuarioActualDemo,
         fechaVencimiento: ahora.add(const Duration(days: 8)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Recopilar resultados del trimestre actual',
+            miembroId: mJavier,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Resultados de ventas',
+                miembroId: mJavier,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Resultados de producción',
+                miembroId: mJavier,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Definir metas por área',
+            subActividades: [
+              Actividad(id: _nextActividadId++, descripcion: 'Producción'),
+              Actividad(id: _nextActividadId++, descripcion: 'Ventas'),
+              Actividad(id: _nextActividadId++, descripcion: 'Calidad'),
+            ],
+          ),
+        ],
         orden: ordenTareas++,
         etiquetaIds: [etComite],
       ),
@@ -508,6 +737,65 @@ class InMemoryKanbanRepository implements KanbanRepository {
         fechaVencimiento: ahora.subtract(const Duration(days: 5)),
         fechaInicioReal: ahora.subtract(const Duration(days: 10)),
         fechaFinReal: ahora.subtract(const Duration(days: 6)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Actualizar costos de insumos',
+            terminada: true,
+            miembroId: mMartinez,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Costos de materia prima',
+                terminada: true,
+                miembroId: mMartinez,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Costos de mano de obra',
+                terminada: true,
+                miembroId: mMartinez,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Recalcular márgenes por línea',
+            terminada: true,
+            miembroId: mMartinez,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Línea económica',
+                terminada: true,
+                miembroId: mMartinez,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Línea premium',
+                terminada: true,
+                miembroId: mMartinez,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Publicar tabulador interno',
+            terminada: true,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Subir a intranet',
+                terminada: true,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Notificar a ventas',
+                terminada: true,
+              ),
+            ],
+          ),
+        ],
         etiquetaIds: [etComite],
       ),
       Tarea(
@@ -521,6 +809,40 @@ class InMemoryKanbanRepository implements KanbanRepository {
         fechaInicio: ahora.subtract(const Duration(days: 3)),
         fechaVencimiento: ahora.add(const Duration(days: 4)),
         fechaInicioReal: ahora.subtract(const Duration(days: 3)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Preparar comparativo de márgenes',
+            terminada: true,
+            miembroId: mJavier,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Comparar contra el trimestre anterior',
+                terminada: true,
+                miembroId: mJavier,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Comparar contra la competencia',
+                terminada: true,
+                miembroId: mJavier,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Reunión con dirección',
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Presentar comparativo',
+                terminada: true,
+              ),
+              Actividad(id: _nextActividadId++, descripcion: 'Acordar ajustes'),
+            ],
+          ),
+        ],
         etiquetaIds: [etComite],
       ),
       Tarea(
@@ -532,6 +854,36 @@ class InMemoryKanbanRepository implements KanbanRepository {
         miembroIds: [mGomez],
         asignadoPor: kUsuarioActualDemo,
         fechaVencimiento: ahora.add(const Duration(days: 9)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Formatear lista final',
+            miembroId: mGomez,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Aplicar plantilla oficial',
+                miembroId: mGomez,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Revisar ortografía',
+                miembroId: mGomez,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Subir a portal de clientes',
+            subActividades: [
+              Actividad(id: _nextActividadId++, descripcion: 'Cargar archivo PDF'),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Verificar enlace público',
+              ),
+            ],
+          ),
+        ],
         orden: ordenTareas++,
         etiquetaIds: [etComite],
         dependeDeIds: [idMargenes],
@@ -545,6 +897,36 @@ class InMemoryKanbanRepository implements KanbanRepository {
         miembroIds: [mMartinez],
         asignadoPor: kUsuarioActualDemo,
         fechaVencimiento: ahora.add(const Duration(days: 11)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Redactar comunicado',
+            miembroId: mMartinez,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Versión para distribuidores',
+                miembroId: mMartinez,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Versión para clientes directos',
+                miembroId: mMartinez,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Enviar a cuentas clave',
+            subActividades: [
+              Actividad(id: _nextActividadId++, descripcion: 'Cuentas nacionales'),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Cuentas internacionales',
+              ),
+            ],
+          ),
+        ],
         orden: ordenTareas++,
         etiquetaIds: [etComite],
         dependeDeIds: [idMargenes],
@@ -611,6 +993,65 @@ class InMemoryKanbanRepository implements KanbanRepository {
         fechaVencimiento: ahora.subtract(const Duration(days: 10)),
         fechaInicioReal: ahora.subtract(const Duration(days: 15)),
         fechaFinReal: ahora.subtract(const Duration(days: 11)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Definir requerimientos funcionales',
+            terminada: true,
+            miembroId: mSalazar,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Requerimientos de hardware',
+                terminada: true,
+                miembroId: mSalazar,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Requerimientos de software',
+                terminada: true,
+                miembroId: mSalazar,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Validar factibilidad técnica',
+            terminada: true,
+            miembroId: mSalazar,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Prueba de concepto',
+                terminada: true,
+                miembroId: mSalazar,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Revisión con ingeniería',
+                terminada: true,
+                miembroId: mSalazar,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Firmar especificación final',
+            terminada: true,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Firma de diseño',
+                terminada: true,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Firma de dirección',
+                terminada: true,
+              ),
+            ],
+          ),
+        ],
         etiquetaIds: [etComite],
       ),
       Tarea(
@@ -624,6 +1065,48 @@ class InMemoryKanbanRepository implements KanbanRepository {
         fechaInicio: ahora.subtract(const Duration(days: 6)),
         fechaVencimiento: ahora.add(const Duration(days: 2)),
         fechaInicioReal: ahora.subtract(const Duration(days: 6)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Construir prototipo funcional',
+            terminada: true,
+            miembroId: mSalazar,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Ensamblar componentes',
+                terminada: true,
+                miembroId: mSalazar,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Pruebas iniciales',
+                terminada: true,
+                miembroId: mSalazar,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Presentar a dirección',
+            miembroId: mJavier,
+            // Hereda el mismo responsable de su actividad contenedora (ver
+            // `asignarResponsableActividad`).
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Preparar presentación',
+                terminada: true,
+                miembroId: mJavier,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Obtener aprobación final',
+                miembroId: mJavier,
+              ),
+            ],
+          ),
+        ],
         etiquetaIds: [etComite],
       ),
       Tarea(
@@ -635,6 +1118,33 @@ class InMemoryKanbanRepository implements KanbanRepository {
         miembroIds: [mFernandez],
         asignadoPor: kUsuarioActualDemo,
         fechaVencimiento: ahora.add(const Duration(days: 9)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Fotografiar producto final',
+            miembroId: mFernandez,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Fotos de estudio',
+                miembroId: mFernandez,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Fotos de contexto de uso',
+                miembroId: mFernandez,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Actualizar fichas técnicas',
+            subActividades: [
+              Actividad(id: _nextActividadId++, descripcion: 'Ficha en español'),
+              Actividad(id: _nextActividadId++, descripcion: 'Ficha en inglés'),
+            ],
+          ),
+        ],
         orden: ordenTareas++,
         etiquetaIds: [etComite],
         dependeDeIds: [idPrototipo],
@@ -648,6 +1158,33 @@ class InMemoryKanbanRepository implements KanbanRepository {
         miembroIds: [mSalazar],
         asignadoPor: kUsuarioActualDemo,
         fechaVencimiento: ahora.add(const Duration(days: 13)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Preparar material de capacitación',
+            miembroId: mSalazar,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Presentación general',
+                miembroId: mSalazar,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Manual de referencia rápida',
+                miembroId: mSalazar,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Agendar sesión con soporte',
+            subActividades: [
+              Actividad(id: _nextActividadId++, descripcion: 'Reservar sala'),
+              Actividad(id: _nextActividadId++, descripcion: 'Enviar invitación'),
+            ],
+          ),
+        ],
         orden: ordenTareas++,
         etiquetaIds: [etComite],
         dependeDeIds: [idPrototipo],
@@ -661,6 +1198,33 @@ class InMemoryKanbanRepository implements KanbanRepository {
         miembroIds: [mJavier],
         asignadoPor: kUsuarioActualDemo,
         fechaVencimiento: ahora.add(const Duration(days: 15)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Reservar línea de producción',
+            miembroId: mJavier,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Confirmar fecha con planta',
+                miembroId: mJavier,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Bloquear turno de producción',
+                miembroId: mJavier,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Confirmar insumos disponibles',
+            subActividades: [
+              Actividad(id: _nextActividadId++, descripcion: 'Verificar inventario'),
+              Actividad(id: _nextActividadId++, descripcion: 'Solicitar faltantes'),
+            ],
+          ),
+        ],
         orden: ordenTareas++,
         etiquetaIds: [etComite],
         dependeDeIds: [idPrototipo],
@@ -674,6 +1238,33 @@ class InMemoryKanbanRepository implements KanbanRepository {
         miembroIds: [mFernandez],
         asignadoPor: kUsuarioActualDemo,
         fechaVencimiento: ahora.add(const Duration(days: 6)),
+        actividades: [
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Listar temas a cubrir',
+            miembroId: mFernandez,
+            subActividades: [
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Temas técnicos',
+                miembroId: mFernandez,
+              ),
+              Actividad(
+                id: _nextActividadId++,
+                descripcion: 'Temas comerciales',
+                miembroId: mFernandez,
+              ),
+            ],
+          ),
+          Actividad(
+            id: _nextActividadId++,
+            descripcion: 'Definir calendario de sesiones',
+            subActividades: [
+              Actividad(id: _nextActividadId++, descripcion: 'Sesión 1'),
+              Actividad(id: _nextActividadId++, descripcion: 'Sesión 2'),
+            ],
+          ),
+        ],
         orden: ordenTareas++,
         etiquetaIds: [etComite],
       ),
@@ -1183,12 +1774,27 @@ class InMemoryKanbanRepository implements KanbanRepository {
     final actividades = _conActividadTransformada(
       _tareas[idx].actividades,
       actividadId,
-      (a) => a.conResponsable(
-        miembroId: miembroId,
-        departamento: departamento,
-        fechaInicio: fechaInicio,
-        fechaFin: fechaFin,
-      ),
+      (a) {
+        final actualizada = a.conResponsable(
+          miembroId: miembroId,
+          departamento: departamento,
+          fechaInicio: fechaInicio,
+          fechaFin: fechaFin,
+        );
+        // Asignar un responsable a una subtarea que a su vez tiene sus
+        // propias subtareas se lo hereda a TODAS ellas (a cualquier
+        // profundidad) — sin esto, delegar una subtarea con hijas dejaba a
+        // esas hijas sin nadie asignado, como si aún nadie fuera a
+        // resolverlas aunque su tarea contenedora ya sí tuviera dueño.
+        if (miembroId == null && departamento == null) return actualizada;
+        return actualizada.copyWith(
+          subActividades: _conResponsableEnArbol(
+            actualizada.subActividades,
+            miembroId: miembroId,
+            departamento: departamento,
+          ),
+        );
+      },
     );
     _tareas[idx] = _tareas[idx].copyWith(actividades: actividades);
     _recalcularBloqueoPorSubtareas(tareaId);
@@ -1605,6 +2211,28 @@ class InMemoryKanbanRepository implements KanbanRepository {
       }
     }
     return true;
+  }
+
+  /// Ver el comentario en `asignarResponsableActividad`: propaga el mismo
+  /// responsable a todo el árbol de subtareas de una actividad, a
+  /// cualquier profundidad.
+  List<Actividad> _conResponsableEnArbol(
+    List<Actividad> lista, {
+    int? miembroId,
+    String? departamento,
+  }) {
+    return [
+      for (final a in lista)
+        a
+            .conResponsable(miembroId: miembroId, departamento: departamento)
+            .copyWith(
+              subActividades: _conResponsableEnArbol(
+                a.subActividades,
+                miembroId: miembroId,
+                departamento: departamento,
+              ),
+            ),
+    ];
   }
 
   List<Actividad> _sinResponsableEnArbol(List<Actividad> lista, int miembroId) {

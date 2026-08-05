@@ -473,10 +473,15 @@ mixin _ProyectosSeccionesMixin {
   }
 
   Widget _carrilProyecto(
+    BuildContext context,
     _ProyectoReporte p, {
     required bool esMovil,
     required VoidCallback alRefrescar,
   }) {
+    // Cada `_ProyectoReporte` es UNA tarjeta "Comité" (ver
+    // `_cargarReporteProyectos`): `p.tareas` siempre tiene exactamente un
+    // elemento, nunca está vacía.
+    final tarea = p.tareas.first;
     final resumen = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -499,6 +504,25 @@ mixin _ProyectosSeccionesMixin {
             fontWeight: FontWeight.w800,
             color: KanbanColors.texto,
           ),
+        ),
+        const SizedBox(height: 4),
+        // El responsable de la tarjeta principal de esta ÁREA (cada
+        // `_ProyectoReporte` es UNA tarjeta "Comité", ver
+        // `_cargarReporteProyectos`) — antes solo se veía adentro del
+        // chip, sin nada que lo destacara en el resumen del carril.
+        Row(
+          children: [
+            Icon(Icons.person_outline_rounded, size: 12, color: KanbanColors.tdim),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                tarea.responsable,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 10.5, color: KanbanColors.tdim),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 10),
         ClipRRect(
@@ -539,27 +563,18 @@ mixin _ProyectosSeccionesMixin {
         ),
       ],
     );
-    // La etiqueta "Comité" puede existir ya en esta área (se crea sola al
-    // abrirla como comité) sin que todavía nadie haya marcado ninguna
-    // actividad con ella — un carril sin chips y sin ningún aviso se veía
-    // como un espacio roto/a medio cargar en vez de "no hay nada aquí
-    // todavía".
-    final chips = p.tareas.isEmpty
-        ? Text(
-            'Sin actividades con la etiqueta "Comité" todavía.',
-            style: TextStyle(fontSize: 11.5, color: KanbanColors.tdim),
-          )
-        : Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              for (final t in p.tareas) _chipTarea(t, p.color, alRefrescar),
-            ],
-          );
+    // Una sola card por tarjeta (no un listado siempre desplegado): al
+    // tocarla se expande mostrando sus actividades y subtareas — evita
+    // repetir el título de la tarjeta (ya está en `p.nombre` arriba).
+    final tarjetaActividades = _CardActividadesTarea(
+      tarea: tarea,
+      colorProyecto: p.color,
+      alRefrescar: alRefrescar,
+    );
 
-    // En móvil no cabe la franja lateral fija de 220 + divisor + chips uno
-    // junto al otro — se apila el resumen arriba y los chips abajo, mismo
-    // criterio que ya usa el módulo para Lista en pantallas angostas
+    // En móvil no cabe la franja lateral fija de 220 + divisor + la card
+    // una junto a la otra — se apila el resumen arriba y la card abajo,
+    // mismo criterio que ya usa el módulo para Lista en pantallas angostas
     // (tarjetas apiladas en vez de una tabla/fila ancha).
     if (esMovil) {
       return Container(
@@ -571,7 +586,10 @@ mixin _ProyectosSeccionesMixin {
             Container(height: 4, color: p.color),
             Padding(padding: const EdgeInsets.all(14), child: resumen),
             Divider(height: 1, color: KanbanColors.borde),
-            Padding(padding: const EdgeInsets.all(12), child: chips),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: tarjetaActividades,
+            ),
           ],
         ),
       );
@@ -591,225 +609,219 @@ mixin _ProyectosSeccionesMixin {
             ),
             VerticalDivider(width: 1, color: KanbanColors.borde),
             Expanded(
-              child: Padding(padding: const EdgeInsets.all(12), child: chips),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: tarjetaActividades,
+              ),
             ),
           ],
         ),
       ),
     );
   }
-
-  Widget _chipTarea(
-    _TareaReporte t,
-    Color colorProyecto,
-    VoidCallback alRefrescar,
-  ) {
-    return _ChipTarea(
-      tarea: t,
-      colorProyecto: colorProyecto,
-      alRefrescar: alRefrescar,
-    );
-  }
 }
 
-/// Chip de tarea del carril de proyecto — tocarlo abre la tarjeta completa
-/// de la tarea de verdad (`TareaDetailDialog`, la misma del tablero), no
-/// solo una vista con más texto: esto ya lee tareas reales del Kanban, así
-/// que tiene sentido poder abrir/editar la de verdad desde aquí.
-class _ChipTarea extends StatelessWidget {
+/// Cuenta cuántas [_ActividadReporte] hay en total (a cualquier
+/// profundidad) — igual que `Tarea.actividadesTotales`, pero sobre el árbol
+/// ya resuelto del reporte.
+int _contarActividadesReporte(List<_ActividadReporte> lista) {
+  var total = lista.length;
+  for (final a in lista) {
+    total += _contarActividadesReporte(a.subActividades);
+  }
+  return total;
+}
+
+int _contarTerminadasReporte(List<_ActividadReporte> lista) {
+  var terminadas = 0;
+  for (final a in lista) {
+    if (a.terminada) terminadas++;
+    terminadas += _contarTerminadasReporte(a.subActividades);
+  }
+  return terminadas;
+}
+
+Widget _filaActividadReporte(
+  _ActividadReporte a,
+  Color colorProyecto, {
+  int profundidad = 0,
+}) {
+  return Padding(
+    padding: EdgeInsets.only(left: profundidad * 16.0, bottom: 6),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 13,
+              height: 13,
+              margin: const EdgeInsets.only(top: 1.5, right: 6),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: a.terminada ? colorProyecto : Colors.transparent,
+                border: Border.all(color: colorProyecto, width: 1.3),
+              ),
+              alignment: Alignment.center,
+              child: a.terminada
+                  ? const Icon(Icons.check, size: 9, color: Colors.white)
+                  : null,
+            ),
+            Expanded(
+              child: Text(
+                a.descripcion,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  // Una actividad con subtareas funciona como una "lista"
+                  // (mismo criterio que `TareaDetailDialog`): se destaca
+                  // en negrita para distinguirla de una hoja.
+                  fontWeight: a.subActividades.isNotEmpty
+                      ? FontWeight.w700
+                      : FontWeight.normal,
+                  color: a.terminada ? KanbanColors.tdim : KanbanColors.texto,
+                  decoration: a.terminada ? TextDecoration.lineThrough : null,
+                ),
+              ),
+            ),
+            if (a.responsable != null) ...[
+              const SizedBox(width: 6),
+              Text(
+                a.responsable!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w600,
+                  color: KanbanColors.tdim,
+                ),
+              ),
+            ],
+          ],
+        ),
+        for (final hija in a.subActividades)
+          _filaActividadReporte(
+            hija,
+            colorProyecto,
+            profundidad: profundidad + 1,
+          ),
+      ],
+    ),
+  );
+}
+
+/// Card compacta del checklist de una tarjeta "Comité": colapsada muestra
+/// solo un resumen ("N actividades" · "X/N completadas") para no repetir el
+/// título de la tarjeta (ya está en el encabezado del carril) — tocarla
+/// despliega sus actividades y subtareas en secuencia. El icono aparte abre
+/// la tarjeta completa de verdad (`TareaDetailDialog`), para quien quiera
+/// editarla en vez de solo consultar el checklist.
+class _CardActividadesTarea extends StatefulWidget {
   final _TareaReporte tarea;
   final Color colorProyecto;
   final VoidCallback alRefrescar;
 
-  const _ChipTarea({
+  const _CardActividadesTarea({
     required this.tarea,
     required this.colorProyecto,
     required this.alRefrescar,
   });
 
   @override
+  State<_CardActividadesTarea> createState() => _CardActividadesTareaState();
+}
+
+class _CardActividadesTareaState extends State<_CardActividadesTarea> {
+  bool _expandido = false;
+
+  @override
   Widget build(BuildContext context) {
-    final t = tarea;
-    final esHecho = t.estado == _EstadoReporte.hecho;
-    final esCurso = t.estado == _EstadoReporte.curso;
-    final esFrena = t.estado == _EstadoReporte.frena;
-
-    final Color fondo = esHecho
-        ? colorProyecto
-        : (esFrena ? KanbanColors.bg : KanbanColors.bg2);
-    final Color borde = esCurso ? colorProyecto : KanbanColors.borde;
-    final Color textoColor = esHecho
-        ? Colors.white
-        : (esFrena ? KanbanColors.tdim : KanbanColors.texto);
-    final Color subColor = esHecho
-        ? Colors.white.withValues(alpha: 0.75)
-        : KanbanColors.tdim;
-
-    final chip = Material(
+    final t = widget.tarea;
+    final total = _contarActividadesReporte(t.actividades);
+    final terminadas = _contarTerminadasReporte(t.actividades);
+    return Material(
       color: Colors.transparent,
-      borderRadius: BorderRadius.circular(6),
+      borderRadius: BorderRadius.circular(8),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => TareaDetailDialog.show(
-          context,
-          repository: t.repo,
-          tareaId: t.tareaIdReal,
-          onRefresh: alRefrescar,
-        ),
+        onTap: total == 0
+            ? null
+            : () => setState(() => _expandido = !_expandido),
         child: Container(
-          width: 190,
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: fondo,
-            borderRadius: BorderRadius.circular(6),
-            // Detenida (`esFrena`) NO lleva este borde sólido — se le
-            // dibuja uno punteado por fuera (`_BordePunteado`, más abajo)
-            // para que se distinga a simple vista de "en curso"/"listo
-            // para iniciar" sin depender solo del color.
-            border: esFrena
-                ? null
-                : Border.all(color: borde, width: esCurso ? 2 : 1),
+            color: KanbanColors.bg2,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: KanbanColors.borde),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (t.dependeDe.isNotEmpty)
-                Container(
-                  margin: const EdgeInsets.only(bottom: 6),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 5,
-                    vertical: 1,
-                  ),
-                  decoration: BoxDecoration(
-                    color: colorProyecto,
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                  child: Text(
-                    'depende de ${t.dependeDe.join(', ')}',
-                    style: const TextStyle(
-                      fontSize: 8,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 14,
-                    height: 14,
-                    margin: const EdgeInsets.only(top: 1, right: 6),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: esHecho ? Colors.white : Colors.transparent,
-                      border: Border.all(
-                        color: esHecho ? Colors.white : colorProyecto,
-                        width: 1.4,
-                      ),
-                    ),
-                    alignment: Alignment.center,
-                    child: esHecho
-                        ? Icon(Icons.check, size: 10, color: colorProyecto)
-                        : (esCurso
-                              ? Container(
-                                  width: 6,
-                                  height: 6,
-                                  decoration: const BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: Color(0xFFE08A00),
-                                  ),
-                                )
-                              : null),
-                  ),
-                  Expanded(
-                    child: Text(
-                      '${t.nombre} (${t.id})',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w600,
-                        color: textoColor,
-                      ),
-                    ),
-                  ),
-                  // Da la pista de que el chip es tocable — sin esto, "abre
-                  // la tarjeta completa al tocar" no tiene ninguna señal
-                  // visual antes del primer toque.
-                  Icon(
-                    Icons.open_in_full_rounded,
-                    size: 12,
-                    color: subColor,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
               Row(
                 children: [
-                  // `Expanded` (no `Spacer`): así es el nombre del
-                  // responsable el que se trunca con "…" si no alcanza el
-                  // espacio, y la etiqueta de fecha (el dato que importa:
-                  // "espera T11 + T12 + T13" puede ser larga) nunca se
-                  // corta ni desborda.
                   Expanded(
-                    child: Text(
-                      t.responsable,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.3,
-                        color: subColor,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  // `Flexible` con más peso que el `Expanded` del
-                  // responsable (flex 3 vs 1): protege contra desbordes en
-                  // chips angostos sin sacrificar la etiqueta primero — es
-                  // el dato de estado lo que importa más ver completo.
-                  Flexible(
-                    flex: 3,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 5,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: esFrena
-                            ? KanbanColors.dangerLight
-                            : (esHecho
-                                  ? Colors.white.withValues(alpha: 0.18)
-                                  : KanbanColors.bg3),
-                        borderRadius: BorderRadius.circular(3),
-                      ),
-                      child: Text(
-                        t.etiquetaFecha,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
-                          color: esFrena
-                              ? KanbanColors.danger
-                              : (esHecho ? Colors.white : KanbanColors.tdim),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          total == 0
+                              ? 'Sin actividades'
+                              : '$total ${total == 1 ? 'actividad' : 'actividades'}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: KanbanColors.texto,
+                          ),
                         ),
-                      ),
+                        if (total > 0) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            '$terminadas/$total completadas',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              color: KanbanColors.tdim,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
+                  IconButton(
+                    tooltip: 'Abrir tarjeta completa',
+                    icon: Icon(
+                      Icons.open_in_full_rounded,
+                      size: 15,
+                      color: KanbanColors.tdim,
+                    ),
+                    onPressed: () => TareaDetailDialog.show(
+                      context,
+                      repository: t.repo,
+                      tareaId: t.tareaIdReal,
+                      onRefresh: widget.alRefrescar,
+                    ),
+                  ),
+                  if (total > 0)
+                    Icon(
+                      _expandido
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      size: 18,
+                      color: KanbanColors.tdim,
+                    ),
                 ],
               ),
+              if (_expandido && total > 0) ...[
+                const SizedBox(height: 8),
+                for (final a in t.actividades)
+                  _filaActividadReporte(a, widget.colorProyecto),
+              ],
             ],
           ),
         ),
       ),
     );
-
-    return esFrena
-        ? _BordePunteado(color: KanbanColors.borde, child: chip)
-        : chip;
   }
 }

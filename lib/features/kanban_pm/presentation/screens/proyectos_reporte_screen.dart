@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import '../../data/kanban_repository.dart';
 import '../../data/usuario_directorio.dart';
 import '../../data/workspace_repository.dart';
+import '../../domain/entities/actividad.dart';
+import '../../domain/entities/miembro.dart';
 import '../../domain/entities/tarea.dart';
 import '../../domain/entities/tarea_etiqueta.dart';
 import '../../domain/entities/workspace.dart';
@@ -206,7 +208,7 @@ class _ProyectosReporteScreenState extends State<ProyectosReporteScreen>
                     datos.proyectos.length == 1
                         ? 'El proyecto'
                         : 'Los ${datos.proyectos.length} proyectos',
-                    'Cada carril es un área de trabajo del comité.',
+                    'Cada carril es una tarjeta con la etiqueta "Comité".',
                   ),
                   const SizedBox(height: 14),
                   _leyenda(),
@@ -214,11 +216,13 @@ class _ProyectosReporteScreenState extends State<ProyectosReporteScreen>
                   if (datos.proyectos.isEmpty)
                     _mensajeVacio(
                       'Ningún miembro del comité pertenece a un área de '
-                      'trabajo todavía.',
+                      'trabajo todavía, o ninguna de sus tarjetas tiene la '
+                      'etiqueta "Comité" todavía.',
                     )
                   else
                     for (final p in datos.proyectos) ...[
                       _carrilProyecto(
+                        context,
                         p,
                         esMovil: esMovil,
                         alRefrescar: _cargar,

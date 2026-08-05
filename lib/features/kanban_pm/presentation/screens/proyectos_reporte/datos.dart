@@ -28,10 +28,12 @@ class _TaponDatos {
 }
 
 /// Resultado completo de cargar el reporte "Proyectos" con datos reales:
-/// "proyectos" son las áreas de trabajo donde pertenece algún miembro del
-/// comité, "actividades" son las tareas —en cualquier columna— con la
-/// etiqueta "Comité" dentro de esas áreas. Ver el doc comment de
-/// [ProyectosReporteScreen].
+/// cada "proyecto" (cada carril "ÁREA NN") es UNA tarjeta con la etiqueta
+/// "Comité" —en cualquier columna, de cualquier área de trabajo donde
+/// pertenezca algún miembro del comité—, no un área de trabajo completa:
+/// una misma área de trabajo con 3 tarjetas etiquetadas "Comité" produce 3
+/// carriles "ÁREA NN" independientes, uno por tarjeta. Ver el doc comment
+/// de [ProyectosReporteScreen].
 class _ReporteProyectosDatos {
   final List<_ProyectoReporte> proyectos;
   final Map<String, List<_PendienteReporte>> pendientesPorResponsable;
@@ -71,8 +73,31 @@ String _rangoFechas(DateTime? inicio, DateTime? fin) {
   return '$ini → $fi';
 }
 
+/// Convierte el checklist real de una tarea (`Actividad`, a cualquier
+/// profundidad) a [_ActividadReporte], resolviendo `miembroId` a un nombre
+/// contra el catálogo del área — el reporte no tiene forma de resolver ese
+/// id por su cuenta en el punto donde se dibuja.
+List<_ActividadReporte> _actividadesReporte(
+  List<Actividad> lista,
+  Map<int, Miembro> miembrosPorId,
+) {
+  return [
+    for (final a in lista)
+      _ActividadReporte(
+        descripcion: a.descripcion,
+        terminada: a.terminada,
+        responsable: a.miembroId != null
+            ? miembrosPorId[a.miembroId]?.nombre
+            : a.departamento,
+        subActividades: _actividadesReporte(a.subActividades, miembrosPorId),
+      ),
+  ];
+}
+
 /// Carga el reporte completo: usuarios del comité → sus áreas de trabajo →
-/// tareas con etiqueta "Comité" en cada una (sin importar su columna).
+/// tareas con etiqueta "Comité" en cada una (sin importar su columna). Cada
+/// una de esas tarjetas se convierte en su propio carril "ÁREA NN" — no se
+/// agrupan por área de trabajo.
 Future<_ReporteProyectosDatos> _cargarReporteProyectos(
   WorkspaceRepository workspaceRepo,
 ) async {
@@ -112,9 +137,12 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
   final workspacesOrdenados = workspacesPorId.values.toList()
     ..sort((a, b) => a.nombre.toLowerCase().compareTo(b.nombre.toLowerCase()));
 
+  // A diferencia de `workspacesOrdenados` (una entrada por área de
+  // trabajo): este cuenta tarjetas, así que se incrementa una vez por
+  // cada tarjeta "Comité" que se convierte en su propio carril "ÁREA NN"
+  // (ver más abajo), no una vez por área de trabajo.
   var indice = 0;
   for (final w in workspacesOrdenados) {
-    indice++;
     final repo = workspaceRepo.kanbanRepositoryPara(w.id);
     final etiquetas = await repo.listarEtiquetas();
     TareaEtiqueta? etiquetaComite;
@@ -132,9 +160,17 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
     final todasLasTareas = etiquetaComite == null
         ? <Tarea>[]
         : (await repo.listarTareas()).where((t) => !t.archivada).toList();
-    final tareasComite = todasLasTareas
-        .where((t) => t.etiquetaIds.contains(etiquetaComite!.id))
-        .toList();
+    // Orden estable por título (mismo criterio que `workspacesOrdenados`):
+    // de esto depende directamente qué número "ÁREA NN" le toca a cada
+    // tarjeta, así que no puede depender del orden en que el repositorio
+    // devuelva `listarTareas()`.
+    final tareasComite =
+        todasLasTareas
+            .where((t) => t.etiquetaIds.contains(etiquetaComite!.id))
+            .toList()
+          ..sort(
+            (a, b) => a.titulo.toLowerCase().compareTo(b.titulo.toLowerCase()),
+          );
 
     final miembros = await repo.listarMiembros();
     final miembrosPorId = {for (final m in miembros) m.id: m};
@@ -180,24 +216,13 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
           return predecesora != null && !predecesora.cerrada;
         });
 
-    final tareasReporte = <_TareaReporte>[];
-    var cerradasProyecto = 0;
-    DateTime? inicioProyecto;
-    DateTime? finProyecto;
-
     for (final t in tareasComite) {
       totalTareas++;
-      if (t.cerrada) {
-        totalCerradas++;
-        cerradasProyecto++;
-      }
+      if (t.cerrada) totalCerradas++;
       if (t.vencida) diasTarde++;
 
       final inicioTarea = t.fechaInicio ?? t.fechaInicioReal;
       if (inicioTarea != null) {
-        if (inicioProyecto == null || inicioTarea.isBefore(inicioProyecto)) {
-          inicioProyecto = inicioTarea;
-        }
         if (rangoInicio == null || inicioTarea.isBefore(rangoInicio)) {
           rangoInicio = inicioTarea;
         }
@@ -207,8 +232,8 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
           cierrePlan = t.fechaVencimiento;
         }
       }
-      // `finTarea`: fecha de cierre a usar para el rango REAL del proyecto
-      // (`finProyecto`/`rangoFin`). Simétrico al `t.fechaInicio ??
+      // `finTarea`: fecha de cierre a usar para el rango REAL de esta
+      // tarjeta (`fechaFin`/`rangoFin`). Simétrico al `t.fechaInicio ??
       // t.fechaInicioReal` de arriba: si la tarea ya cerró de verdad,
       // `fechaFinReal` es más fiel que la fecha planeada (pudo cerrar
       // antes o después de lo previsto). Solo aplica cuando `t.cerrada`
@@ -219,9 +244,6 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
           ? (t.fechaFinReal ?? t.fechaVencimiento)
           : t.fechaVencimiento;
       if (finTarea != null) {
-        if (finProyecto == null || finTarea.isAfter(finProyecto)) {
-          finProyecto = finTarea;
-        }
         if (rangoFin == null || finTarea.isAfter(rangoFin)) {
           rangoFin = finTarea;
         }
@@ -260,16 +282,34 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
               }).map((id) => 'T$id').join(' + ')}',
       };
 
-      tareasReporte.add(
-        _TareaReporte(
-          id: 'T${t.id}',
+      final tareaReporte = _TareaReporte(
+        id: 'T${t.id}',
+        nombre: t.titulo,
+        responsable: responsable,
+        estado: estado,
+        etiquetaFecha: etiquetaFecha,
+        dependeDe: t.dependeDeIds.map((id) => 'T$id').toList(),
+        repo: repo,
+        tareaIdReal: t.id,
+        actividades: _actividadesReporte(t.actividades, miembrosPorId),
+      );
+
+      // Cada tarjeta "Comité" es su propio carril "ÁREA NN" — ver el doc
+      // comment de `_cargarReporteProyectos`.
+      indice++;
+      proyectos.add(
+        _ProyectoReporte(
+          numero: 'ÁREA ${indice.toString().padLeft(2, '0')}',
           nombre: t.titulo,
-          responsable: responsable,
-          estado: estado,
-          etiquetaFecha: etiquetaFecha,
-          dependeDe: t.dependeDeIds.map((id) => 'T$id').toList(),
-          repo: repo,
-          tareaIdReal: t.id,
+          color: w.color,
+          cerradas: t.cerrada ? 1 : 0,
+          total: 1,
+          resumenFecha: finTarea == null
+              ? 'sin fecha'
+              : 'cierra ${kanbanFechaCompacta(finTarea)}',
+          tareas: [tareaReporte],
+          fechaInicio: inicioTarea,
+          fechaFin: finTarea,
         ),
       );
 
@@ -349,22 +389,6 @@ Future<_ReporteProyectosDatos> _cargarReporteProyectos(
         }
       }
     }
-
-    proyectos.add(
-      _ProyectoReporte(
-        numero: 'ÁREA ${indice.toString().padLeft(2, '0')}',
-        nombre: w.nombre,
-        color: w.color,
-        cerradas: cerradasProyecto,
-        total: tareasComite.length,
-        resumenFecha: finProyecto == null
-            ? 'sin fecha'
-            : 'cierra ${kanbanFechaCompacta(finProyecto)}',
-        tareas: tareasReporte,
-        fechaInicio: inicioProyecto,
-        fechaFin: finProyecto,
-      ),
-    );
   }
 
   return _ReporteProyectosDatos(

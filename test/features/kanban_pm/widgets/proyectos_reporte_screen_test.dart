@@ -12,6 +12,11 @@ import 'package:plataforma_pm/features/kanban_pm/presentation/screens/proyectos_
 /// en que el reporte recorre las áreas del comité.
 const _nombreArea = 'WS Comité Test';
 
+/// Cada carril "ÁREA NN" es ahora UNA tarjeta (ver `_cargarReporteProyectos`),
+/// así que las claves `pista_`/`barra_` del calendario simplificado se
+/// arman con el título de la tarjeta, no con el nombre del área de trabajo.
+const _tituloTareaTardia = 'Tarea abierta más tardía';
+
 /// Arma un `WorkspaceRepository` con un área de trabajo real del comité
 /// (Javier, `u6`, es el único `Usuario.perteneceComite` de la app) y tres
 /// tareas con la etiqueta "Comité": una cerrada, una abierta sin bloqueo
@@ -143,10 +148,10 @@ void main() {
       // tardía del conjunto — su barra debe llegar justo hasta el borde
       // derecho de su pista, nunca más allá.
       final pista = tester.getTopRight(
-        find.byKey(ValueKey('pista_$_nombreArea')),
+        find.byKey(const ValueKey('pista_$_tituloTareaTardia')),
       );
       final barra = tester.getTopRight(
-        find.byKey(ValueKey('barra_$_nombreArea')),
+        find.byKey(const ValueKey('barra_$_tituloTareaTardia')),
       );
       expect(barra.dx, lessThanOrEqualTo(pista.dx + 0.5));
     },
@@ -167,7 +172,7 @@ void main() {
           .getSize(find.byKey(const ValueKey('encabezado_proyectos')))
           .width;
       final anchoPista = tester
-          .getSize(find.byKey(ValueKey('pista_$_nombreArea')))
+          .getSize(find.byKey(const ValueKey('pista_$_tituloTareaTardia')))
           .width;
       // La pista es más angosta que el ancho total de la sección (le
       // restan la etiqueta de 190 y la fecha de 70) — comparar contra un
@@ -179,22 +184,30 @@ void main() {
   );
 
   testWidgets(
-    'tocar un chip de tarea abre la tarjeta completa (TareaDetailDialog)',
+    'tocar el botón "abrir tarjeta completa" de un carril abre la tarjeta '
+    'real (TareaDetailDialog)',
     (tester) async {
       await bombear(tester, const Size(1400, 1000));
 
       expect(find.byType(Dialog), findsNothing);
 
-      // "Tarea base" está cerrada (terminado) — solo aparece en el chip
-      // del carril, no en "Qué debe cerrar cada quien" (esa sección solo
-      // lista tareas abiertas), así que este `InkWell` es inequívoco.
-      final chip = find.ancestor(
-        of: find.textContaining('Tarea base'),
-        matching: find.byType(InkWell),
+      // "Tarea base" es ahora el título del carril mismo (cada carril es
+      // UNA tarjeta, ver `_cargarReporteProyectos`), no un chip — el botón
+      // que abre la tarjeta real vive dentro del mismo carril (`Container`
+      // con `cardDecoration`, único ancestro `Container` del título).
+      final carril = find
+          .ancestor(
+            of: find.text('Tarea base'),
+            matching: find.byType(Container),
+          )
+          .first;
+      final boton = find.descendant(
+        of: carril,
+        matching: find.byTooltip('Abrir tarjeta completa'),
       );
-      await tester.ensureVisible(chip);
+      await tester.ensureVisible(boton);
       await tester.pumpAndSettle();
-      await tester.tap(chip);
+      await tester.tap(boton);
       await tester.pumpAndSettle();
 
       // La tarjeta real de la tarea (no un simple texto expandido) — debe
@@ -316,15 +329,19 @@ void main() {
       // Regresión: "Qué debe cerrar cada quien" solo miraba
       // `miembroIds.first` — una tarea asignada a 2 personas solo
       // aparecía en la lista de la primera, dejando a la segunda sin
-      // enterarse de que también le toca cerrarla. El título aparece 4
-      // veces en total: el chip de su carril, la mención en "activar hoy"
-      // del tapón (es una tarea libre, se lista una sola vez ahí sin
-      // importar cuántos responsables tenga) y una fila por cada uno de
-      // sus 2 responsables en "qué debe cerrar cada quien". Antes del fix
-      // hubiera sido solo 3 (sin la segunda fila de responsable).
+      // enterarse de que también le toca cerrarla. El título aparece 5
+      // veces en total: el encabezado de su propio carril "ÁREA NN" (cada
+      // tarjeta "Comité" es ahora su propio carril, ver
+      // `_cargarReporteProyectos`; esta tarea no tiene actividades propias
+      // en este fixture, así que su carril no repite el título en ningún
+      // otro lado), su fila "ÁREA NN · título" en el calendario
+      // simplificado, la mención en "activar hoy" del tapón (es una tarea
+      // libre, se lista una sola vez ahí sin importar cuántos
+      // responsables tenga) y una fila por cada uno de sus 2 responsables
+      // en "qué debe cerrar cada quien".
       await bombear(tester, const Size(1400, 1000));
 
-      expect(find.textContaining('Tarea co-asignada'), findsNWidgets(4));
+      expect(find.textContaining('Tarea co-asignada'), findsNWidgets(5));
     },
   );
 
@@ -335,9 +352,16 @@ void main() {
   });
 
   testWidgets(
-    'un área con la etiqueta "Comité" pero sin actividades muestra un '
-    'aviso, no un carril vacío',
+    'un área de trabajo con la etiqueta "Comité" pero sin tarjetas '
+    'etiquetadas no agrega ningún carril',
     (tester) async {
+      // Regresión: cada carril "ÁREA NN" es ahora UNA tarjeta (no un área
+      // de trabajo completa) — un área de trabajo cuya etiqueta "Comité"
+      // ya existe (se crea sola al abrirla como comité) pero que todavía
+      // no tiene ninguna tarjeta con esa etiqueta simplemente no debe
+      // aportar ningún carril, ni tampoco el viejo aviso de "carril
+      // vacío" (ese concepto ya no aplica: no hay carril que mostrar
+      // vacío, solo cero tarjetas).
       tester.view.physicalSize = const Size(1400, 1000);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -368,9 +392,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
+      expect(find.textContaining('WS Comité Vacía'), findsNothing);
       expect(
         find.text('Sin actividades con la etiqueta "Comité" todavía.'),
-        findsOneWidget,
+        findsNothing,
       );
     },
   );

@@ -39,10 +39,17 @@ class _TareaReporte {
 
   /// El repositorio y el id real (no el `"T$id"` de [id]) de la tarea que
   /// esto representa — permite abrir la tarjeta completa de verdad
-  /// (`TareaDetailDialog`, la misma del tablero) al tocar su chip en vez
+  /// (`TareaDetailDialog`, la misma del tablero) al tocar su carril en vez
   /// de solo mostrar más texto.
   final KanbanRepository repo;
   final int tareaIdReal;
+
+  /// Su checklist real (a cualquier profundidad, responsables ya resueltos
+  /// a texto) — el carril de esta tarjeta en "Los proyectos" lista estas
+  /// actividades y sus subtareas en vez de repetir [nombre] otra vez (antes
+  /// mostraba un chip con el mismo título de la tarjeta, redundante con el
+  /// encabezado del carril).
+  final List<_ActividadReporte> actividades;
 
   const _TareaReporte({
     required this.id,
@@ -53,6 +60,27 @@ class _TareaReporte {
     required this.repo,
     required this.tareaIdReal,
     this.dependeDe = const [],
+    this.actividades = const [],
+  });
+}
+
+/// Una fila del checklist de [_TareaReporte.actividades] — mismo árbol que
+/// [Actividad]/[Actividad.subActividades], pero con el responsable ya
+/// resuelto a un texto (nombre de miembro o departamento) en vez del
+/// `miembroId` crudo: este reporte no tiene acceso directo al catálogo de
+/// miembros de cada área en el punto donde se dibuja, así que se resuelve
+/// una sola vez al cargar los datos (ver `_actividadesReporte`).
+class _ActividadReporte {
+  final String descripcion;
+  final bool terminada;
+  final String? responsable;
+  final List<_ActividadReporte> subActividades;
+
+  const _ActividadReporte({
+    required this.descripcion,
+    required this.terminada,
+    this.responsable,
+    this.subActividades = const [],
   });
 }
 
